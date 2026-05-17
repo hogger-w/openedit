@@ -1,0 +1,6078 @@
+﻿#include "framework.h"
+#include "openedit.h"
+#include "FindReplaceWindow.h"
+
+// 确保包含正确的Scintilla头文件（顺序也很重要）
+#include <windows.h>
+#include <windowsx.h>
+#include <commdlg.h>
+#include <commctrl.h>
+#include <dwmapi.h>
+#include <uxtheme.h>
+#include <shellapi.h>
+#include <shobjidl.h>
+#include "Scintilla.h"
+#include "SciLexer.h"
+#include "ILexer.h"
+#include "Lexilla.h"
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <cstring>
+#include <cwctype>
+#include <filesystem>
+#include <initializer_list>
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#pragma comment(lib, "Dwmapi.lib")
+#pragma comment(lib, "UxTheme.lib")
+
+#define MAX_LOADSTRING 100
+
+#ifndef TVS_NOHSCROLL
+#define TVS_NOHSCROLL 0x8000
+#endif
+
+#ifndef TVS_EX_DOUBLEBUFFER
+#define TVS_EX_DOUBLEBUFFER 0x0004
+#endif
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+
+constexpr int kFolderPaneMinWidth = 160;
+constexpr int kFolderPaneMaxWidth = 520;
+constexpr int kFolderPaneDividerWidth = 5;
+constexpr int kEditorMinWidth = 160;
+constexpr int kTabBarHeight = 26;
+constexpr int kStatusBarHeight = 24;
+constexpr int kTabWidth = 100;
+constexpr int kTabSaveIconSize = 12;
+constexpr int kTabCloseSize = 14;
+constexpr int kTabCornerRadius = 7;
+constexpr int kViewMenuIndex = 3;
+constexpr int kLanguageMenuIndex = 4;
+constexpr int kEditorFontSize = 14;
+constexpr int kWordHighlightIndicator = 31;
+constexpr DWORD kFindOptionRegex = 0x10000000;
+constexpr DWORD kFindOptionMask = FR_DOWN | FR_MATCHCASE | FR_WHOLEWORD | kFindOptionRegex;
+constexpr WORD kSearchTextBufferLength = 256;
+constexpr int HTFOLDERTOGGLE = 100;
+constexpr COLORREF kFolderPaneBackColor = RGB(236, 242, 248);
+constexpr COLORREF kFolderPaneTextColor = RGB(32, 45, 58);
+constexpr COLORREF kFolderPaneLineColor = RGB(188, 202, 216);
+constexpr COLORREF kTabBarBackColor = RGB(238, 241, 245);
+constexpr COLORREF kTabActiveBackColor = RGB(255, 255, 255);
+constexpr COLORREF kTabInactiveBackColor = RGB(226, 232, 238);
+constexpr COLORREF kTabBorderColor = RGB(190, 198, 208);
+constexpr COLORREF kTabTextColor = RGB(35, 45, 58);
+constexpr COLORREF kTabSaveBlue = RGB(35, 111, 195);
+constexpr COLORREF kTabSaveRed = RGB(214, 54, 54);
+constexpr COLORREF kVsCodeEditorBack = RGB(30, 30, 30);
+constexpr COLORREF kVsCodeCurrentLineBack = RGB(42, 45, 46);
+constexpr COLORREF kVsCodeText = RGB(212, 212, 212);
+constexpr COLORREF kVsCodeLineNumber = RGB(133, 133, 133);
+constexpr COLORREF kVsCodeInvisible = RGB(64, 64, 64);
+constexpr COLORREF kVsCodeSelectionBack = RGB(38, 79, 120);
+constexpr COLORREF kVsCodeCaret = RGB(174, 175, 173);
+constexpr COLORREF kVsCodeComment = RGB(106, 153, 85);
+constexpr COLORREF kVsCodeKeyword = RGB(86, 156, 214);
+constexpr COLORREF kVsCodeControlKeyword = RGB(197, 134, 192);
+constexpr COLORREF kVsCodeType = RGB(78, 201, 176);
+constexpr COLORREF kVsCodeFunction = RGB(220, 220, 170);
+constexpr COLORREF kVsCodeVariable = RGB(156, 220, 254);
+constexpr COLORREF kVsCodeString = RGB(206, 145, 120);
+constexpr COLORREF kVsCodeNumber = RGB(181, 206, 168);
+constexpr COLORREF kVsCodeOperator = RGB(212, 212, 212);
+constexpr COLORREF kVsCodeTag = RGB(86, 156, 214);
+constexpr COLORREF kVsCodeCssSelector = RGB(215, 186, 125);
+constexpr COLORREF kVsCodeLink = RGB(78, 190, 255);
+constexpr COLORREF kVsCodeEscape = RGB(209, 105, 105);
+constexpr COLORREF kVsCodeError = RGB(244, 71, 71);
+constexpr COLORREF kVsCodeMarkdownCodeBack = RGB(37, 37, 38);
+constexpr COLORREF kVsCodeLightEditorBack = RGB(255, 255, 255);
+constexpr COLORREF kVsCodeLightCurrentLineBack = RGB(245, 245, 245);
+constexpr COLORREF kVsCodeLightText = RGB(0, 0, 0);
+constexpr COLORREF kVsCodeLightLineNumber = RGB(35, 92, 147);
+constexpr COLORREF kVsCodeLightInvisible = RGB(191, 191, 191);
+constexpr COLORREF kVsCodeLightSelectionBack = RGB(173, 214, 255);
+constexpr COLORREF kVsCodeLightCaret = RGB(0, 0, 0);
+constexpr COLORREF kVsCodeLightComment = RGB(0, 128, 0);
+constexpr COLORREF kVsCodeLightKeyword = RGB(0, 0, 255);
+constexpr COLORREF kVsCodeLightControlKeyword = RGB(175, 0, 219);
+constexpr COLORREF kVsCodeLightType = RGB(38, 127, 153);
+constexpr COLORREF kVsCodeLightFunction = RGB(121, 94, 38);
+constexpr COLORREF kVsCodeLightVariable = RGB(0, 16, 128);
+constexpr COLORREF kVsCodeLightString = RGB(163, 21, 21);
+constexpr COLORREF kVsCodeLightNumber = RGB(9, 134, 88);
+constexpr COLORREF kVsCodeLightOperator = RGB(0, 0, 0);
+constexpr COLORREF kVsCodeLightTag = RGB(128, 0, 0);
+constexpr COLORREF kVsCodeLightCssSelector = RGB(128, 0, 0);
+constexpr COLORREF kVsCodeLightLink = RGB(0, 0, 255);
+constexpr COLORREF kVsCodeLightEscape = RGB(129, 31, 63);
+constexpr COLORREF kVsCodeLightError = RGB(220, 0, 0);
+constexpr COLORREF kVsCodeLightMarkdownCodeBack = RGB(247, 247, 247);
+constexpr int IDC_SETTINGS_THEME_LIGHT = 1004;
+constexpr int IDC_SETTINGS_THEME_DARK = 1005;
+constexpr int IDC_SETTINGS_LANGUAGE_CHINESE = 1006;
+constexpr int IDC_SETTINGS_LANGUAGE_ENGLISH = 1007;
+constexpr int IDC_SETTINGS_RESTORE_PREVIOUS_FILES = 1008;
+constexpr int kFolderSplitterPreviewWindowWidth = 5;
+constexpr COLORREF kFolderSplitterPreviewBackColor = RGB(255, 0, 255);
+constexpr COLORREF kFolderSplitterPreviewLineColor = RGB(180, 180, 180);
+constexpr COLORREF kFolderTreeIconMaskColor = RGB(255, 0, 255);
+
+const wchar_t kTabBarClassName[] = L"OpenEditTabBar";
+const wchar_t kStatusBarClassName[] = L"OpenEditStatusBar";
+const wchar_t kSettingsWindowClassName[] = L"OpenEditSettingsWindow";
+const wchar_t kAboutWindowClassName[] = L"OpenEditAboutWindow";
+const wchar_t kFolderSplitterPreviewClassName[] = L"OpenEditFolderSplitterPreview";
+
+enum class AppTheme
+{
+    Light,
+    Dark,
+};
+
+enum class AppLanguage
+{
+    Chinese,
+    English,
+};
+
+// 全局变量
+HINSTANCE hInst;
+WCHAR szTitle[MAX_LOADSTRING];
+WCHAR szWindowClass[MAX_LOADSTRING];
+HWND hWnd = nullptr;
+HWND g_hSci = nullptr;          // Scintilla窗口句柄
+HWND g_hFolderTree = nullptr;
+HWND g_hTabBar = nullptr;
+HWND g_hStatusBar = nullptr;
+HWND g_hTabTooltip = nullptr;
+HWND g_hFindReplaceDialog = nullptr;
+HWND g_hSettingsWindow = nullptr;
+HWND g_hAboutWindow = nullptr;
+HWND g_hFolderSplitterPreview = nullptr;
+HMENU g_hSettingsMenu = nullptr;
+HIMAGELIST g_hFolderTreeImageList = nullptr;
+WNDPROC g_originalFolderTreeProc = nullptr;
+std::unique_ptr<OpenEditFindWindow> g_findWindow;
+HBRUSH g_hPopupBackBrush = nullptr;
+HBRUSH g_hPopupSurfaceBrush = nullptr;
+HBRUSH g_hMenuBackBrush = nullptr;
+
+SciFnDirect g_pSciFn = nullptr; // Scintilla官方直接调用函数
+sptr_t g_pSciPtr = 0;           // Scintilla实例指针
+UINT g_findReplaceMessage = 0;
+int g_currentLanguageCommand = IDM_LANG_TEXT;
+AppTheme g_appTheme = AppTheme::Dark;
+AppLanguage g_appLanguage = AppLanguage::Chinese;
+bool g_folderPaneVisible = false;
+bool g_draggingFolderSplitter = false;
+bool g_applyingFolderTreeTheme = false;
+int g_folderPaneWidth = kFolderPaneMinWidth;
+int g_folderSplitterPreviewWidth = -1;
+bool g_restorePreviousFilesOnStartup = true;
+bool g_restoreFolderInSession = false;
+AppTheme g_settingsDraftTheme = AppTheme::Dark;
+AppLanguage g_settingsDraftLanguage = AppLanguage::Chinese;
+bool g_settingsDraftRestorePreviousFiles = true;
+bool g_showSpaceAndTab = false;
+bool g_showEndOfLine = false;
+bool g_wordWrapEnabled = true;
+std::wstring g_currentFilePath;
+std::wstring g_currentFolderPath;
+std::wstring g_tabTooltipText;
+int g_hoveredTabIndex = -1;
+int g_hoveredTabCloseIndex = -1;
+bool g_trackingTabMouse = false;
+FINDREPLACEW g_findReplace{};
+wchar_t g_findText[kSearchTextBufferLength]{};
+wchar_t g_replaceText[kSearchTextBufferLength]{};
+DWORD g_lastFindOptions = FR_DOWN;
+std::string g_highlightedWord;
+
+struct ThemedMenuItem
+{
+    std::wstring text;
+    bool topLevel = false;
+    bool hasSubMenu = false;
+    bool separator = false;
+};
+
+std::vector<std::unique_ptr<ThemedMenuItem>> g_mainMenuItems;
+
+enum class DocumentEncoding
+{
+    Utf8,
+    Utf8Bom,
+    Ansi,
+    Utf16LE,
+    Utf16BE,
+};
+
+enum class StatusHitArea
+{
+    None,
+    Encoding,
+    EolFormat,
+};
+
+struct FolderItem
+{
+    std::wstring name;
+    std::wstring path;
+    bool isDirectory = false;
+    bool childrenLoaded = false;
+};
+
+std::vector<std::unique_ptr<FolderItem>> g_folderItems;
+int g_folderIconIndex = 0;
+int g_folderOpenIconIndex = 0;
+int g_textFileIconIndex = 0;
+
+struct DocumentTab
+{
+    std::wstring title;
+    std::wstring path;
+    std::wstring sessionTempPath;
+    std::string text;
+    std::string savedText;
+    int languageCommand = IDM_LANG_TEXT;
+    DocumentEncoding encoding = DocumentEncoding::Utf8;
+    int eolMode = SC_EOL_CRLF;
+    bool modified = false;
+    bool untitled = true;
+};
+
+std::vector<DocumentTab> g_tabs;
+int g_activeTabIndex = -1;
+int g_contextTabIndex = -1;
+int g_nextUntitledIndex = 1;
+bool g_loadingTabContent = false;
+
+// 函数前向声明
+ATOM                MyRegisterClass(HINSTANCE hInstance);
+BOOL                InitInstance(HINSTANCE, int);
+LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    TabBarWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    StatusBarWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    SettingsWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    AboutWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    FolderTreeWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    FolderSplitterPreviewWndProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
+void                SetActiveTabModified(bool modified);
+void                ApplyAppTheme();
+void                InitializeFolderTreeImageList();
+void                LoadAppSettings();
+void                SaveAppSettings();
+bool                LoadStartupTabs();
+bool                SaveSessionState();
+void                UpdateMainMenuText();
+void                UpdateViewMenuCheck();
+void                UpdateLanguageMenuCheck();
+void                ShowSettingsWindow();
+void                ShowAboutWindow();
+void                InvalidateTabBar();
+void                InvalidateFolderTree();
+void                PopulateFolderTree(const std::wstring& folderPath);
+void                ApplyWindowChromeTheme(HWND window);
+void                ApplyControlTheme(HWND window);
+void                ApplyFolderTreeTheme();
+void                ApplyMainMenuTheme();
+HBRUSH              GetMenuBackBrush();
+void                ExpandFolderTreeItem(HTREEITEM treeItem);
+void                ToggleFolderTreeItem(HTREEITEM treeItem);
+bool                HandleFolderTreeItemClickAt(POINT clientPoint, bool doubleClick);
+void                ClearWordHighlights();
+void                InvalidateStatusBar();
+
+enum class SyntaxFamily
+{
+    Plain,
+    CppLike,
+    Python,
+    HyperText,
+    Css,
+    Json,
+    Sql,
+    Bash,
+    PowerShell,
+    Rust,
+    Lua,
+    Ruby,
+    Markdown,
+};
+
+struct LanguageDefinition
+{
+    int commandId;
+    const char* lexerName;
+    SyntaxFamily family;
+    std::array<const char*, 8> keywords;
+};
+
+const std::array<LanguageDefinition, 18> kLanguages = { {
+    { IDM_LANG_TEXT, nullptr, SyntaxFamily::Plain, {} },
+    { IDM_LANG_CPP, "cpp", SyntaxFamily::CppLike, {
+        "alignas alignof and and_eq asm auto bitand bitor bool break case catch char char8_t char16_t char32_t class compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double dynamic_cast else enum explicit export extern false final float for friend goto if import inline int long module mutable namespace new noexcept not not_eq nullptr operator or or_eq override private protected public register reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq",
+        "int8_t int16_t int32_t int64_t intptr_t size_t ssize_t ptrdiff_t uint8_t uint16_t uint32_t uint64_t uintptr_t FILE std string vector map unordered_map set unordered_set array optional variant shared_ptr unique_ptr weak_ptr",
+        "attention author brief bug code date deprecated note param return see since todo version warning",
+        "HWND HINSTANCE LPARAM LRESULT WPARAM WCHAR DWORD BOOL HANDLE COLORREF RECT POINT SIZE"
+    } },
+    { IDM_LANG_CSHARP, "cpp", SyntaxFamily::CppLike, {
+        "abstract as async await base bool break byte case catch char checked class const continue decimal default delegate do double else enum event explicit extern false finally fixed float for foreach get goto if implicit in init int interface internal is lock long namespace new null object operator out override params partial private protected public readonly record ref required return sbyte sealed set short sizeof stackalloc static string struct switch this throw true try typeof uint ulong unchecked unsafe ushort using var virtual void volatile when where while yield",
+        "Action Console DateTime Dictionary Enumerable Exception Func Guid IEnumerable IList List Math Nullable Object Regex String StringBuilder Task ValueTask"
+    } },
+    { IDM_LANG_JAVA, "cpp", SyntaxFamily::CppLike, {
+        "abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new null package private protected public return short static strictfp super switch synchronized this throw throws transient true try var void volatile while yield record sealed permits",
+        "ArrayList Boolean Double Exception HashMap Integer List Long Map Object Optional Set Stream String StringBuilder System"
+    } },
+    { IDM_LANG_JAVASCRIPT, "cpp", SyntaxFamily::CppLike, {
+        "async await break case catch class const continue debugger default delete do else export extends false finally for from function get if import in instanceof let new null of return set static super switch this throw true try typeof undefined var void while with yield",
+        "Array Boolean Date Error Function JSON Map Math Number Object Promise Proxy Reflect RegExp Set String Symbol WeakMap WeakSet console document window"
+    } },
+    { IDM_LANG_TYPESCRIPT, "cpp", SyntaxFamily::CppLike, {
+        "abstract any as asserts async await bigint boolean break case catch class const constructor continue debugger declare default delete do else enum export extends false finally for from function get if implements import in infer instanceof interface is keyof let module namespace never new null number object of override package private protected public readonly require return set static string super switch symbol this throw true try type typeof undefined unique unknown var void while with yield",
+        "Array Boolean Date Error Function JSON Map Math Number Object Promise ReadonlyArray Record RegExp Set String Symbol WeakMap WeakSet console document window"
+    } },
+    { IDM_LANG_PYTHON, "python", SyntaxFamily::Python, {
+        "False None True and as assert async await break case class continue def del elif else except finally for from global if import in is lambda match nonlocal not or pass raise return try while with yield",
+        "__init__ abs all any bool bytearray bytes callable chr classmethod dict dir enumerate filter float format frozenset getattr hasattr int isinstance issubclass len list map max min next object open print property range repr reversed round set setattr slice sorted staticmethod str sum super tuple type zip"
+    } },
+    { IDM_LANG_HTML, "hypertext", SyntaxFamily::HyperText, {
+        "a abbr address article aside audio b base blockquote body br button canvas code div dl dt dd em fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hr html i iframe img input label legend li link main meta nav noscript ol option p pre script section select small span strong style table tbody td textarea th thead title tr ul video class id href src alt rel type name value placeholder role aria-label data",
+        "async await break case catch class const continue default delete do else export extends false finally for function if import in instanceof let new null return static super switch this throw true try typeof undefined var void while yield",
+        "",
+        "False None True and as assert async await break class continue def elif else except finally for from if import in is lambda not or pass raise return try while with yield",
+        "abstract and array as bool boolean break callable case catch class clone const continue declare default die do echo else elseif empty enddeclare endfor endforeach endif endswitch endwhile enum eval exit extends false final finally float fn for foreach function global goto if implements include include_once instanceof insteadof int interface isset list match mixed namespace new null object or parent print private protected public readonly require require_once resource return self static string switch throw trait true try unset use var void while xor yield"
+    } },
+    { IDM_LANG_XML, "xml", SyntaxFamily::HyperText, {} },
+    { IDM_LANG_CSS, "css", SyntaxFamily::Css, {
+        "align-content align-items align-self animation animation-delay animation-duration animation-name background background-color background-image border border-bottom border-color border-radius border-top box-shadow box-sizing color content cursor display flex flex-direction flex-wrap font font-family font-size font-weight gap grid grid-template-columns height justify-content left line-height margin max-height max-width min-height min-width opacity overflow padding position right text-align text-decoration top transform transition visibility width z-index",
+        "active checked disabled empty enabled first-child first-of-type focus hover last-child last-of-type not nth-child nth-of-type root visited",
+        "align-content align-items animation background-size border-radius box-shadow box-sizing flex flex-basis flex-direction flex-grow flex-shrink grid-template-areas grid-template-columns grid-template-rows opacity outline transform transition",
+        "accent-color aspect-ratio backdrop-filter block-size clip-path container container-name container-type filter grid-template inset inline-size object-fit place-content place-items user-select",
+        "after before first-letter first-line marker placeholder selection"
+    } },
+    { IDM_LANG_JSON, "json", SyntaxFamily::Json, {
+        "false null true",
+        "@base @container @context @graph @id @index @language @list @reverse @set @type @value @vocab"
+    } },
+    { IDM_LANG_SQL, "sql", SyntaxFamily::Sql, {
+        "add alter and as asc between by case check column constraint create database default delete desc distinct drop else exists false foreign from full group having in index inner insert into is join key left like limit not null on or order outer primary procedure references right select set table then true union unique update values view when where",
+        "bigint binary bit blob boolean char clob date datetime decimal double float int integer json money nchar numeric nvarchar real smallint text time timestamp tinyint varchar"
+    } },
+    { IDM_LANG_BASH, "bash", SyntaxFamily::Bash, {
+        "alias bg bind break builtin case cd command compgen complete continue declare dirs disown do done echo elif else enable esac eval exec exit export false fg fi for function getopts hash help history if in jobs kill let local logout popd printf pushd pwd read readonly return select set shift shopt source suspend test then time times trap true type typeset ulimit umask unalias unset until wait while"
+    } },
+    { IDM_LANG_POWERSHELL, "powershell", SyntaxFamily::PowerShell, {
+        "begin break catch class continue data define do dynamicparam else elseif end enum exit filter finally for foreach from function if in param process return switch throw trap try until using var while workflow",
+        "add-content clear-content clear-item clear-variable compare-object convertfrom-json convertto-json copy-item foreach-object get-childitem get-command get-content get-help get-item get-location get-member get-process get-service get-variable invoke-command join-path measure-object move-item new-item out-file remove-item rename-item select-object set-content set-item set-location sort-object start-process stop-process test-path where-object write-host write-output",
+        "cat cd clear cp curl del dir echo erase foreach gci grep history ls man md mkdir mv popd ps pushd pwd rm rmdir sleep sort tee type wget"
+    } },
+    { IDM_LANG_RUST, "rust", SyntaxFamily::Rust, {
+        "as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while",
+        "bool char f32 f64 i8 i16 i32 i64 i128 isize str u8 u16 u32 u64 u128 usize",
+        "Box Clone Copy Debug Default Drop Eq Err Error Fn FnMut FnOnce From Into Iterator None Ok Option Result Send Some String Sync Vec"
+    } },
+    { IDM_LANG_LUA, "lua", SyntaxFamily::Lua, {
+        "and break do else elseif end false for function goto if in local nil not or repeat return then true until while",
+        "assert collectgarbage dofile error getmetatable ipairs load loadfile next pairs pcall print rawequal rawget rawlen rawset require select setmetatable tonumber tostring type xpcall",
+        "coroutine.create coroutine.resume coroutine.running coroutine.status coroutine.wrap coroutine.yield math.abs math.ceil math.floor math.max math.min math.random math.sin math.sqrt string.byte string.find string.format string.gsub string.len string.lower string.match string.sub string.upper table.concat table.insert table.remove table.sort",
+        "io.close io.flush io.input io.lines io.open io.output io.read io.type io.write os.clock os.date os.difftime os.execute os.exit os.getenv os.remove os.rename os.time"
+    } },
+    { IDM_LANG_RUBY, "ruby", SyntaxFamily::Ruby, {
+        "__FILE__ __LINE__ alias and begin break case class def defined? do else elsif end ensure false for if in module next nil not or redo rescue retry return self super then true undef unless until when while yield"
+    } },
+    { IDM_LANG_MARKDOWN, "markdown", SyntaxFamily::Markdown, {} },
+} };
+
+sptr_t Sci(unsigned int message, uptr_t wParam = 0, sptr_t lParam = 0)
+{
+    if (!g_pSciFn || !g_pSciPtr)
+        return 0;
+    return g_pSciFn(g_pSciPtr, message, wParam, lParam);
+}
+
+bool IsDarkTheme()
+{
+    return g_appTheme == AppTheme::Dark;
+}
+
+const wchar_t* UiText(const wchar_t* chinese, const wchar_t* english)
+{
+    return g_appLanguage == AppLanguage::Chinese ? chinese : english;
+}
+
+COLORREF ThemeEditorBack() { return IsDarkTheme() ? kVsCodeEditorBack : kVsCodeLightEditorBack; }
+COLORREF ThemeCurrentLineBack() { return IsDarkTheme() ? kVsCodeCurrentLineBack : kVsCodeLightCurrentLineBack; }
+COLORREF ThemeEditorText() { return IsDarkTheme() ? kVsCodeText : kVsCodeLightText; }
+COLORREF ThemeLineNumber() { return IsDarkTheme() ? kVsCodeLineNumber : kVsCodeLightLineNumber; }
+COLORREF ThemeInvisible() { return IsDarkTheme() ? kVsCodeInvisible : kVsCodeLightInvisible; }
+COLORREF ThemeSelectionBack() { return IsDarkTheme() ? kVsCodeSelectionBack : kVsCodeLightSelectionBack; }
+COLORREF ThemeCaret() { return IsDarkTheme() ? kVsCodeCaret : kVsCodeLightCaret; }
+COLORREF ThemeComment() { return IsDarkTheme() ? kVsCodeComment : kVsCodeLightComment; }
+COLORREF ThemeKeyword() { return IsDarkTheme() ? kVsCodeKeyword : kVsCodeLightKeyword; }
+COLORREF ThemeControlKeyword() { return IsDarkTheme() ? kVsCodeControlKeyword : kVsCodeLightControlKeyword; }
+COLORREF ThemeType() { return IsDarkTheme() ? kVsCodeType : kVsCodeLightType; }
+COLORREF ThemeFunction() { return IsDarkTheme() ? kVsCodeFunction : kVsCodeLightFunction; }
+COLORREF ThemeVariable() { return IsDarkTheme() ? kVsCodeVariable : kVsCodeLightVariable; }
+COLORREF ThemeString() { return IsDarkTheme() ? kVsCodeString : kVsCodeLightString; }
+COLORREF ThemeNumber() { return IsDarkTheme() ? kVsCodeNumber : kVsCodeLightNumber; }
+COLORREF ThemeOperator() { return IsDarkTheme() ? kVsCodeOperator : kVsCodeLightOperator; }
+COLORREF ThemeTag() { return IsDarkTheme() ? kVsCodeTag : kVsCodeLightTag; }
+COLORREF ThemeCssSelector() { return IsDarkTheme() ? kVsCodeCssSelector : kVsCodeLightCssSelector; }
+COLORREF ThemeLink() { return IsDarkTheme() ? kVsCodeLink : kVsCodeLightLink; }
+COLORREF ThemeEscape() { return IsDarkTheme() ? kVsCodeEscape : kVsCodeLightEscape; }
+COLORREF ThemeError() { return IsDarkTheme() ? kVsCodeError : kVsCodeLightError; }
+COLORREF ThemeMarkdownCodeBack() { return IsDarkTheme() ? kVsCodeMarkdownCodeBack : kVsCodeLightMarkdownCodeBack; }
+COLORREF ThemeFolderPaneBack() { return IsDarkTheme() ? RGB(37, 37, 38) : kFolderPaneBackColor; }
+COLORREF ThemeFolderPaneText() { return IsDarkTheme() ? RGB(204, 204, 204) : kFolderPaneTextColor; }
+COLORREF ThemeFolderPaneLine() { return IsDarkTheme() ? RGB(63, 63, 70) : kFolderPaneLineColor; }
+COLORREF ThemeFolderTreeSelectionBack() { return RGB(0, 120, 215); }
+COLORREF ThemeFolderTreeSelectionText() { return RGB(255, 255, 255); }
+COLORREF ThemeTabBarBack() { return IsDarkTheme() ? RGB(37, 37, 38) : kTabBarBackColor; }
+COLORREF ThemeTabActiveBack() { return IsDarkTheme() ? kVsCodeEditorBack : kTabActiveBackColor; }
+COLORREF ThemeTabInactiveBack() { return IsDarkTheme() ? RGB(45, 45, 45) : kTabInactiveBackColor; }
+COLORREF ThemeTabBorder() { return IsDarkTheme() ? RGB(63, 63, 70) : kTabBorderColor; }
+COLORREF ThemeTabText() { return IsDarkTheme() ? RGB(212, 212, 212) : kTabTextColor; }
+COLORREF ThemeTabClose() { return IsDarkTheme() ? RGB(204, 204, 204) : RGB(86, 96, 108); }
+COLORREF ThemeTabCloseHoverBack() { return IsDarkTheme() ? RGB(65, 65, 65) : RGB(209, 216, 224); }
+COLORREF ThemeTabCloseHover() { return IsDarkTheme() ? RGB(255, 255, 255) : RGB(32, 42, 56); }
+COLORREF ThemeStatusBack() { return IsDarkTheme() ? RGB(37, 37, 38) : RGB(244, 247, 250); }
+COLORREF ThemeStatusLine() { return IsDarkTheme() ? RGB(63, 63, 70) : RGB(205, 212, 220); }
+COLORREF ThemeStatusText() { return IsDarkTheme() ? RGB(212, 212, 212) : RGB(55, 65, 78); }
+COLORREF ThemePopupBack() { return IsDarkTheme() ? RGB(45, 45, 48) : RGB(248, 250, 252); }
+COLORREF ThemePopupSurface() { return IsDarkTheme() ? RGB(52, 52, 56) : RGB(255, 255, 255); }
+COLORREF ThemePopupText() { return IsDarkTheme() ? RGB(232, 232, 232) : RGB(31, 41, 55); }
+COLORREF ThemePopupMutedText() { return IsDarkTheme() ? RGB(170, 170, 170) : RGB(91, 101, 113); }
+COLORREF ThemePopupBorder() { return IsDarkTheme() ? RGB(82, 82, 88) : RGB(200, 210, 222); }
+COLORREF ThemePopupButtonBack(bool pressed) { return pressed ? (IsDarkTheme() ? RGB(70, 70, 76) : RGB(221, 232, 246)) : (IsDarkTheme() ? RGB(58, 58, 63) : RGB(242, 246, 251)); }
+COLORREF ThemeAccent() { return RGB(0, 120, 215); }
+COLORREF ThemeMenuBack() { return IsDarkTheme() ? RGB(37, 37, 38) : RGB(248, 250, 252); }
+COLORREF ThemeMenuHoverBack() { return IsDarkTheme() ? RGB(62, 62, 66) : RGB(229, 241, 251); }
+COLORREF ThemeMenuText() { return IsDarkTheme() ? RGB(232, 232, 232) : RGB(31, 41, 55); }
+COLORREF ThemeMenuMutedText() { return IsDarkTheme() ? RGB(150, 150, 150) : RGB(120, 128, 140); }
+COLORREF ThemeMenuBorder() { return IsDarkTheme() ? RGB(74, 74, 78) : RGB(205, 213, 224); }
+
+using SetPreferredAppModeFn = int(WINAPI*)(int appMode);
+using FlushMenuThemesFn = void(WINAPI*)();
+
+void EnableNativeDarkMenuMode(bool dark)
+{
+    static bool initialized = false;
+    static SetPreferredAppModeFn setPreferredAppMode = nullptr;
+    static FlushMenuThemesFn flushMenuThemes = nullptr;
+
+    if (!initialized)
+    {
+        initialized = true;
+        HMODULE uxTheme = LoadLibraryW(L"uxtheme.dll");
+        if (uxTheme)
+        {
+            setPreferredAppMode = reinterpret_cast<SetPreferredAppModeFn>(GetProcAddress(uxTheme, MAKEINTRESOURCEA(135)));
+            flushMenuThemes = reinterpret_cast<FlushMenuThemesFn>(GetProcAddress(uxTheme, MAKEINTRESOURCEA(136)));
+        }
+    }
+
+    if (setPreferredAppMode)
+        setPreferredAppMode(dark ? 1 : 0);
+    if (flushMenuThemes)
+        flushMenuThemes();
+}
+
+void ApplyWindowChromeTheme(HWND window)
+{
+    if (!window)
+        return;
+
+    const BOOL dark = IsDarkTheme() ? TRUE : FALSE;
+    DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+}
+
+void ApplyControlTheme(HWND window)
+{
+    if (!window)
+        return;
+
+    SetWindowTheme(window, IsDarkTheme() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+}
+
+void ApplyFolderTreeTheme()
+{
+    if (!g_hFolderTree)
+        return;
+
+    if (!g_applyingFolderTreeTheme)
+    {
+        g_applyingFolderTreeTheme = true;
+        ApplyControlTheme(g_hFolderTree);
+        g_applyingFolderTreeTheme = false;
+    }
+
+    TreeView_SetBkColor(g_hFolderTree, ThemeFolderPaneBack());
+    TreeView_SetTextColor(g_hFolderTree, ThemeFolderPaneText());
+    TreeView_SetLineColor(g_hFolderTree, ThemeFolderPaneLine());
+}
+
+ThemedMenuItem* GetThemedMenuItemData(HMENU menu, int index)
+{
+    MENUITEMINFOW info{};
+    info.cbSize = sizeof(info);
+    info.fMask = MIIM_FTYPE | MIIM_DATA;
+    if (!GetMenuItemInfoW(menu, index, TRUE, &info))
+        return nullptr;
+    if ((info.fType & MFT_OWNERDRAW) == 0)
+        return nullptr;
+    return reinterpret_cast<ThemedMenuItem*>(info.dwItemData);
+}
+
+std::wstring GetMenuItemDisplayText(HMENU menu, int index)
+{
+    wchar_t buffer[256]{};
+    const int length = GetMenuStringW(menu, index, buffer, static_cast<int>(sizeof(buffer) / sizeof(buffer[0])), MF_BYPOSITION);
+    if (length > 0)
+        return std::wstring(buffer, static_cast<size_t>(length));
+
+    if (ThemedMenuItem* item = GetThemedMenuItemData(menu, index))
+        return item->text;
+
+    return L"";
+}
+
+void ApplyOwnerDrawToMenu(HMENU menu, bool topLevel, std::vector<std::unique_ptr<ThemedMenuItem>>& storage)
+{
+    if (!menu)
+        return;
+
+    MENUINFO menuInfo{};
+    menuInfo.cbSize = sizeof(menuInfo);
+    menuInfo.fMask = MIM_BACKGROUND;
+    menuInfo.hbrBack = GetMenuBackBrush();
+    SetMenuInfo(menu, &menuInfo);
+
+    const int count = GetMenuItemCount(menu);
+    for (int index = 0; index < count; ++index)
+    {
+        MENUITEMINFOW info{};
+        info.cbSize = sizeof(info);
+        info.fMask = MIIM_FTYPE | MIIM_ID | MIIM_SUBMENU | MIIM_STATE | MIIM_DATA;
+        if (!GetMenuItemInfoW(menu, index, TRUE, &info))
+            continue;
+
+        const ThemedMenuItem* existingItem = ((info.fType & MFT_OWNERDRAW) != 0) ?
+            reinterpret_cast<const ThemedMenuItem*>(info.dwItemData) : nullptr;
+        const std::wstring text = GetMenuItemDisplayText(menu, index);
+        auto item = std::make_unique<ThemedMenuItem>();
+        item->text = text;
+        item->topLevel = topLevel;
+        item->hasSubMenu = info.hSubMenu != nullptr;
+        item->separator = existingItem ? existingItem->separator : ((info.fType & MFT_SEPARATOR) != 0);
+        ThemedMenuItem* itemData = item.get();
+        storage.push_back(std::move(item));
+
+        MENUITEMINFOW update{};
+        update.cbSize = sizeof(update);
+        update.fMask = MIIM_FTYPE | MIIM_DATA;
+        update.fType = itemData->separator ? MFT_OWNERDRAW : (MFT_OWNERDRAW | (info.fType & MFT_RADIOCHECK));
+        update.dwItemData = reinterpret_cast<ULONG_PTR>(itemData);
+        SetMenuItemInfoW(menu, index, TRUE, &update);
+
+        if (info.hSubMenu)
+            ApplyOwnerDrawToMenu(info.hSubMenu, false, storage);
+    }
+}
+
+void ApplyMainMenuTheme()
+{
+    HMENU menu = GetMenu(hWnd);
+    if (!menu)
+        return;
+
+    EnableNativeDarkMenuMode(IsDarkTheme());
+    std::vector<std::unique_ptr<ThemedMenuItem>> storage;
+    ApplyOwnerDrawToMenu(menu, true, storage);
+    g_mainMenuItems = std::move(storage);
+    DrawMenuBar(hWnd);
+}
+
+void ApplyPopupMenuTheme(HMENU menu, std::vector<std::unique_ptr<ThemedMenuItem>>& storage)
+{
+    EnableNativeDarkMenuMode(IsDarkTheme());
+    ApplyOwnerDrawToMenu(menu, false, storage);
+}
+
+void DrawThemedMenuArrow(HDC hdc, const RECT& rect, COLORREF color)
+{
+    const int centerY = rect.top + ((rect.bottom - rect.top) / 2);
+    POINT points[3]{
+        { rect.right - 13, centerY - 4 },
+        { rect.right - 7, centerY },
+        { rect.right - 13, centerY + 4 },
+    };
+    HBRUSH brush = CreateSolidBrush(color);
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HGDIOBJ oldBrush = SelectObject(hdc, brush);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    Polygon(hdc, points, 3);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
+void DrawThemedMenuItem(const DRAWITEMSTRUCT* drawItem)
+{
+    if (!drawItem || drawItem->CtlType != ODT_MENU)
+        return;
+
+    const ThemedMenuItem* item = reinterpret_cast<const ThemedMenuItem*>(drawItem->itemData);
+    if (!item)
+        return;
+
+    const bool selected = (drawItem->itemState & ODS_SELECTED) != 0;
+    const bool disabled = (drawItem->itemState & ODS_DISABLED) != 0;
+    const bool checked = (drawItem->itemState & ODS_CHECKED) != 0;
+    const COLORREF back = selected ? ThemeMenuHoverBack() : ThemeMenuBack();
+    const COLORREF text = disabled ? ThemeMenuMutedText() : ThemeMenuText();
+
+    RECT rect = drawItem->rcItem;
+    HBRUSH backBrush = CreateSolidBrush(back);
+    FillRect(drawItem->hDC, &rect, backBrush);
+    DeleteObject(backBrush);
+
+    if (item->separator)
+    {
+        const int y = rect.top + ((rect.bottom - rect.top) / 2);
+        HPEN pen = CreatePen(PS_SOLID, 1, ThemeMenuBorder());
+        HGDIOBJ oldPen = SelectObject(drawItem->hDC, pen);
+        MoveToEx(drawItem->hDC, rect.left + 28, y, nullptr);
+        LineTo(drawItem->hDC, rect.right - 8, y);
+        SelectObject(drawItem->hDC, oldPen);
+        DeleteObject(pen);
+        return;
+    }
+
+    HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    HGDIOBJ oldFont = SelectObject(drawItem->hDC, font);
+    SetBkMode(drawItem->hDC, TRANSPARENT);
+    SetTextColor(drawItem->hDC, text);
+
+    std::wstring label = item->text;
+    std::wstring accelerator;
+    const size_t tab = label.find(L'\t');
+    if (tab != std::wstring::npos)
+    {
+        accelerator = label.substr(tab + 1);
+        label.resize(tab);
+    }
+
+    if (item->topLevel)
+    {
+        RECT textRect = rect;
+        textRect.left += 4;
+        textRect.right -= 4;
+        DrawTextW(drawItem->hDC, label.c_str(), -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+    else
+    {
+        RECT checkRect{ rect.left + 6, rect.top, rect.left + 24, rect.bottom };
+        if (checked)
+        {
+            HPEN checkPen = CreatePen(PS_SOLID, 2, ThemeAccent());
+            HGDIOBJ oldPen = SelectObject(drawItem->hDC, checkPen);
+            const int cy = checkRect.top + ((checkRect.bottom - checkRect.top) / 2);
+            MoveToEx(drawItem->hDC, checkRect.left + 3, cy, nullptr);
+            LineTo(drawItem->hDC, checkRect.left + 7, cy + 4);
+            LineTo(drawItem->hDC, checkRect.right - 2, cy - 5);
+            SelectObject(drawItem->hDC, oldPen);
+            DeleteObject(checkPen);
+        }
+
+        RECT textRect{ rect.left + 30, rect.top, rect.right - 22, rect.bottom };
+        DrawTextW(drawItem->hDC, label.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        if (!accelerator.empty())
+        {
+            RECT acceleratorRect{ rect.left + 140, rect.top, rect.right - 24, rect.bottom };
+            DrawTextW(drawItem->hDC, accelerator.c_str(), -1, &acceleratorRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+        if (item->hasSubMenu)
+            DrawThemedMenuArrow(drawItem->hDC, rect, text);
+    }
+
+    SelectObject(drawItem->hDC, oldFont);
+}
+
+void MeasureThemedMenuItem(MEASUREITEMSTRUCT* measureItem)
+{
+    if (!measureItem || measureItem->CtlType != ODT_MENU)
+        return;
+
+    const ThemedMenuItem* item = reinterpret_cast<const ThemedMenuItem*>(measureItem->itemData);
+    if (!item)
+        return;
+
+    if (item->separator)
+    {
+        measureItem->itemWidth = 180;
+        measureItem->itemHeight = 9;
+        return;
+    }
+
+    HDC hdc = GetDC(hWnd);
+    HGDIOBJ oldFont = hdc ? SelectObject(hdc, GetStockObject(DEFAULT_GUI_FONT)) : nullptr;
+    SIZE size{};
+    if (hdc)
+        GetTextExtentPoint32W(hdc, item->text.c_str(), static_cast<int>(item->text.size()), &size);
+
+    if (hdc && oldFont)
+        SelectObject(hdc, oldFont);
+    if (hdc)
+        ReleaseDC(hWnd, hdc);
+
+    if (item->topLevel)
+    {
+        measureItem->itemWidth = static_cast<UINT>((std::max)(34L, size.cx + 8));
+        measureItem->itemHeight = 22;
+    }
+    else
+    {
+        measureItem->itemWidth = static_cast<UINT>((std::max)(180L, size.cx + 62));
+        measureItem->itemHeight = 26;
+    }
+}
+
+void ApplyEditorViewOptions()
+{
+    Sci(SCI_SETVIEWWS, g_showSpaceAndTab ? SCWS_VISIBLEALWAYS : SCWS_INVISIBLE, 0);
+    Sci(SCI_SETVIEWEOL, g_showEndOfLine ? TRUE : FALSE, 0);
+    Sci(SCI_SETWRAPMODE, g_wordWrapEnabled ? SC_WRAP_WORD : SC_WRAP_NONE, 0);
+}
+
+void SetRepresentation(const char* character, const char* representation, int appearance)
+{
+    Sci(SCI_SETREPRESENTATION, reinterpret_cast<uptr_t>(character), reinterpret_cast<sptr_t>(representation));
+    Sci(SCI_SETREPRESENTATIONAPPEARANCE, reinterpret_cast<uptr_t>(character), appearance);
+}
+
+void ConfigureControlCharacterRepresentations()
+{
+    SetRepresentation("\r\n", "CRLF", SC_REPRESENTATION_PLAIN);
+    SetRepresentation("\r", "CR", SC_REPRESENTATION_PLAIN);
+    SetRepresentation("\n", "LF", SC_REPRESENTATION_PLAIN);
+}
+
+void ConfigureWordHighlightIndicator()
+{
+    Sci(SCI_INDICSETSTYLE, kWordHighlightIndicator, INDIC_ROUNDBOX);
+    Sci(SCI_INDICSETFORE, kWordHighlightIndicator, IsDarkTheme() ? RGB(215, 168, 60) : RGB(255, 196, 45));
+    Sci(SCI_INDICSETALPHA, kWordHighlightIndicator, IsDarkTheme() ? 80 : 90);
+    Sci(SCI_INDICSETOUTLINEALPHA, kWordHighlightIndicator, IsDarkTheme() ? 150 : 170);
+    Sci(SCI_INDICSETUNDER, kWordHighlightIndicator, TRUE);
+}
+
+void SetMenuItemChecked(HMENU hMenu, UINT commandId, bool checked)
+{
+    if (!hMenu)
+        return;
+
+    CheckMenuItem(hMenu, commandId, MF_BYCOMMAND | (checked ? MF_CHECKED : MF_UNCHECKED));
+}
+
+void SetMenuText(HMENU menu, UINT commandId, const wchar_t* text)
+{
+    if (!menu)
+        return;
+
+    ModifyMenuW(menu, commandId, MF_BYCOMMAND | MF_STRING, commandId, text);
+}
+
+bool MenuHasCommand(HMENU menu, UINT commandId)
+{
+    if (!menu)
+        return false;
+
+    const int count = GetMenuItemCount(menu);
+    for (int index = 0; index < count; ++index)
+    {
+        if (GetMenuItemID(menu, index) == commandId)
+            return true;
+    }
+    return false;
+}
+
+void EnsureEditSearchCommands(HMENU editMenu)
+{
+    if (!editMenu || MenuHasCommand(editMenu, IDM_SEARCH_FIND))
+        return;
+
+    AppendMenuW(editMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(editMenu, MF_STRING, IDM_SEARCH_FIND,
+        UiText(L"\u67E5\u627E(&F)\tCtrl+F", L"Find(&F)\tCtrl+F"));
+    AppendMenuW(editMenu, MF_STRING, IDM_SEARCH_REPLACE,
+        UiText(L"\u66FF\u6362(&R)\tCtrl+H", L"Replace(&R)\tCtrl+H"));
+}
+
+int FindSubMenuIndex(HMENU menu, HMENU submenu)
+{
+    if (!menu || !submenu)
+        return -1;
+
+    const int count = GetMenuItemCount(menu);
+    for (int index = 0; index < count; ++index)
+    {
+        if (GetSubMenu(menu, index) == submenu)
+            return index;
+    }
+    return -1;
+}
+
+HMENU FindMenuContainingCommand(HMENU menu, UINT commandId)
+{
+    if (!menu)
+        return nullptr;
+
+    const int count = GetMenuItemCount(menu);
+    for (int index = 0; index < count; ++index)
+    {
+        if (GetMenuItemID(menu, index) == commandId)
+            return menu;
+
+        HMENU submenu = GetSubMenu(menu, index);
+        HMENU found = FindMenuContainingCommand(submenu, commandId);
+        if (found)
+            return found;
+    }
+    return nullptr;
+}
+
+void SetTopMenuText(HMENU menu, int index, const wchar_t* text)
+{
+    HMENU submenu = GetSubMenu(menu, index);
+    if (!submenu)
+        return;
+
+    ModifyMenuW(menu, index, MF_BYPOSITION | MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), text);
+}
+
+void EnsureSettingsMenu(HMENU menu)
+{
+    if (!menu)
+        return;
+
+    if (!g_hSettingsMenu || FindSubMenuIndex(menu, g_hSettingsMenu) < 0)
+        g_hSettingsMenu = FindMenuContainingCommand(menu, IDM_SETTINGS_OPEN);
+
+    if (!g_hSettingsMenu)
+    {
+        g_hSettingsMenu = CreatePopupMenu();
+        if (!g_hSettingsMenu)
+            return;
+
+        const int insertIndex = (std::max)(0, GetMenuItemCount(menu) - 1);
+        InsertMenuW(menu, insertIndex, MF_BYPOSITION | MF_POPUP,
+            reinterpret_cast<UINT_PTR>(g_hSettingsMenu),
+            UiText(L"\u8BBE\u7F6E(&T)", L"Settings(&T)"));
+    }
+
+    if (GetMenuItemCount(g_hSettingsMenu) == 0)
+        AppendMenuW(g_hSettingsMenu, MF_STRING, IDM_SETTINGS_OPEN,
+            UiText(L"\u8BBE\u7F6E(&P)...", L"Preferences(&P)..."));
+    else
+        ModifyMenuW(g_hSettingsMenu, IDM_SETTINGS_OPEN, MF_BYCOMMAND | MF_STRING,
+            IDM_SETTINGS_OPEN, UiText(L"\u8BBE\u7F6E(&P)...", L"Preferences(&P)..."));
+
+    const int settingsIndex = FindSubMenuIndex(menu, g_hSettingsMenu);
+    if (settingsIndex >= 0)
+        ModifyMenuW(menu, settingsIndex, MF_BYPOSITION | MF_POPUP,
+            reinterpret_cast<UINT_PTR>(g_hSettingsMenu),
+            UiText(L"\u8BBE\u7F6E(&T)", L"Settings(&T)"));
+}
+
+void UpdateMainMenuText()
+{
+    HMENU menu = GetMenu(hWnd);
+    if (!menu)
+        return;
+
+    EnsureSettingsMenu(menu);
+
+    SetTopMenuText(menu, 0, UiText(L"\u6587\u4EF6(&F)", L"File(&F)"));
+    SetTopMenuText(menu, 1, UiText(L"\u7F16\u8F91(&E)", L"Edit(&E)"));
+    SetTopMenuText(menu, 2, UiText(L"\u641C\u7D22(&S)", L"Search(&S)"));
+    SetTopMenuText(menu, kViewMenuIndex, UiText(L"\u67E5\u770B(&V)", L"View(&V)"));
+    SetTopMenuText(menu, kLanguageMenuIndex, UiText(L"\u8BED\u6CD5(&L)", L"Syntax(&L)"));
+
+    const int helpIndex = GetMenuItemCount(menu) - 1;
+    SetTopMenuText(menu, helpIndex, UiText(L"\u5E2E\u52A9(&H)", L"Help(&H)"));
+
+    HMENU fileMenu = GetSubMenu(menu, 0);
+    SetMenuText(fileMenu, IDM_FILE_NEW, UiText(L"\u65B0\u5EFA(&N)\tCtrl+N", L"New(&N)\tCtrl+N"));
+    SetMenuText(fileMenu, IDM_FILE_OPEN, UiText(L"\u6253\u5F00\u6587\u4EF6(&O)\tCtrl+O", L"Open File(&O)\tCtrl+O"));
+    SetMenuText(fileMenu, IDM_FILE_OPEN_FOLDER, UiText(L"\u6253\u5F00\u6587\u4EF6\u5939(&F)\tCtrl+Shift+O", L"Open Folder(&F)\tCtrl+Shift+O"));
+    SetMenuText(fileMenu, IDM_FILE_SAVE, UiText(L"\u4FDD\u5B58(&S)\tCtrl+S", L"Save(&S)\tCtrl+S"));
+    SetMenuText(fileMenu, IDM_FILE_SAVE_AS, UiText(L"\u53E6\u5B58\u4E3A(&A)\tCtrl+Shift+S", L"Save As(&A)\tCtrl+Shift+S"));
+    SetMenuText(fileMenu, IDM_FILE_CLOSE_FOLDER, UiText(L"\u5173\u95ED\u6587\u4EF6\u5939(&C)", L"Close Folder(&C)"));
+    SetMenuText(fileMenu, IDM_EXIT, UiText(L"\u9000\u51FA(&X)", L"Exit(&X)"));
+
+    HMENU editMenu = GetSubMenu(menu, 1);
+    EnsureEditSearchCommands(editMenu);
+    SetMenuText(editMenu, IDM_EDIT_UNDO, UiText(L"\u64A4\u9500(&U)\tCtrl+Z", L"Undo(&U)\tCtrl+Z"));
+    SetMenuText(editMenu, IDM_EDIT_REDO, UiText(L"\u91CD\u505A(&R)\tCtrl+Y", L"Redo(&R)\tCtrl+Y"));
+    SetMenuText(editMenu, IDM_EDIT_CUT, UiText(L"\u526A\u5207(&T)\tCtrl+X", L"Cut(&T)\tCtrl+X"));
+    SetMenuText(editMenu, IDM_EDIT_COPY, UiText(L"\u590D\u5236(&C)\tCtrl+C", L"Copy(&C)\tCtrl+C"));
+    SetMenuText(editMenu, IDM_EDIT_PASTE, UiText(L"\u7C98\u8D34(&P)\tCtrl+V", L"Paste(&P)\tCtrl+V"));
+    SetMenuText(editMenu, IDM_EDIT_DELETE, UiText(L"\u5220\u9664(&D)\tDel", L"Delete(&D)\tDel"));
+    SetMenuText(editMenu, IDM_EDIT_SELECT_ALL, UiText(L"\u5168\u9009(&A)\tCtrl+A", L"Select All(&A)\tCtrl+A"));
+    SetMenuText(editMenu, IDM_SEARCH_FIND, UiText(L"\u67E5\u627E(&F)\tCtrl+F", L"Find(&F)\tCtrl+F"));
+    SetMenuText(editMenu, IDM_SEARCH_REPLACE, UiText(L"\u66FF\u6362(&R)\tCtrl+H", L"Replace(&R)\tCtrl+H"));
+
+    HMENU searchMenu = GetSubMenu(menu, 2);
+    SetMenuText(searchMenu, IDM_SEARCH_FIND, UiText(L"\u67E5\u627E(&F)\tCtrl+F", L"Find(&F)\tCtrl+F"));
+    SetMenuText(searchMenu, IDM_SEARCH_FIND_NEXT, UiText(L"\u67E5\u627E\u4E0B\u4E00\u4E2A(&N)\tF3", L"Find Next(&N)\tF3"));
+    SetMenuText(searchMenu, IDM_SEARCH_FIND_PREVIOUS, UiText(L"\u67E5\u627E\u4E0A\u4E00\u4E2A(&P)\tShift+F3", L"Find Previous(&P)\tShift+F3"));
+    SetMenuText(searchMenu, IDM_SEARCH_REPLACE, UiText(L"\u66FF\u6362(&R)\tCtrl+H", L"Replace(&R)\tCtrl+H"));
+
+    HMENU viewMenu = GetSubMenu(menu, kViewMenuIndex);
+    HMENU symbolMenu = viewMenu ? GetSubMenu(viewMenu, 0) : nullptr;
+    if (viewMenu && symbolMenu)
+        ModifyMenuW(viewMenu, 0, MF_BYPOSITION | MF_POPUP,
+            reinterpret_cast<UINT_PTR>(symbolMenu),
+            UiText(L"\u67E5\u770B\u7B26\u53F7(&S)", L"Symbols(&S)"));
+    SetMenuText(symbolMenu, IDM_VIEW_SHOW_SPACE_TAB, UiText(L"\u663E\u793A\u7A7A\u683C\u548C\u5236\u8868\u7B26(&S)", L"Show Space and Tab(&S)"));
+    SetMenuText(symbolMenu, IDM_VIEW_SHOW_EOL, UiText(L"\u663E\u793A\u884C\u5C3E\u7B26(&E)", L"Show End of Line(&E)"));
+    SetMenuText(symbolMenu, IDM_VIEW_SHOW_ALL_CHARS, UiText(L"\u663E\u793A\u6240\u6709\u5B57\u7B26(&A)", L"Show All Characters(&A)"));
+    SetMenuText(viewMenu, IDM_VIEW_WORD_WRAP, UiText(L"\u81EA\u52A8\u6362\u884C(&W)", L"Word Wrap(&W)"));
+    SetMenuText(viewMenu, IDM_VIEW_TOGGLE_FOLDER, UiText(L"\u663E\u793A/\u9690\u85CF\u6587\u4EF6\u5939(&F)", L"Show/Hide Folder(&F)"));
+
+    HMENU syntaxMenu = GetSubMenu(menu, kLanguageMenuIndex);
+    SetMenuText(syntaxMenu, IDM_LANG_TEXT, UiText(L"\u7EAF\u6587\u672C(&T)", L"Plain Text(&T)"));
+
+    HMENU helpMenu = GetSubMenu(menu, helpIndex);
+    SetMenuText(helpMenu, IDM_ABOUT, UiText(L"\u5173\u4E8E(&A)...", L"About(&A)..."));
+
+    UpdateViewMenuCheck();
+    UpdateLanguageMenuCheck();
+    ApplyMainMenuTheme();
+}
+
+void UpdateViewMenuCheck()
+{
+    HMENU hMenu = GetMenu(hWnd);
+    if (!hMenu)
+        return;
+
+    HMENU hViewMenu = GetSubMenu(hMenu, kViewMenuIndex);
+    if (!hViewMenu)
+        return;
+
+    HMENU hSymbolMenu = GetSubMenu(hViewMenu, 0);
+    SetMenuItemChecked(hSymbolMenu, IDM_VIEW_SHOW_SPACE_TAB, g_showSpaceAndTab);
+    SetMenuItemChecked(hSymbolMenu, IDM_VIEW_SHOW_EOL, g_showEndOfLine);
+    SetMenuItemChecked(hSymbolMenu, IDM_VIEW_SHOW_ALL_CHARS, g_showSpaceAndTab && g_showEndOfLine);
+    SetMenuItemChecked(hViewMenu, IDM_VIEW_WORD_WRAP, g_wordWrapEnabled);
+    SetMenuItemChecked(hViewMenu, IDM_VIEW_TOGGLE_FOLDER, g_folderPaneVisible);
+    DrawMenuBar(hWnd);
+}
+
+void ToggleShowSpaceAndTab()
+{
+    g_showSpaceAndTab = !g_showSpaceAndTab;
+    ApplyEditorViewOptions();
+    UpdateViewMenuCheck();
+}
+
+void ToggleShowEndOfLine()
+{
+    g_showEndOfLine = !g_showEndOfLine;
+    ApplyEditorViewOptions();
+    UpdateViewMenuCheck();
+}
+
+void ToggleShowAllCharacters()
+{
+    const bool showAll = !(g_showSpaceAndTab && g_showEndOfLine);
+    g_showSpaceAndTab = showAll;
+    g_showEndOfLine = showAll;
+    ApplyEditorViewOptions();
+    UpdateViewMenuCheck();
+}
+
+void ToggleWordWrap()
+{
+    g_wordWrapEnabled = !g_wordWrapEnabled;
+    ApplyEditorViewOptions();
+    UpdateViewMenuCheck();
+}
+
+void SetStyleFore(std::initializer_list<int> styles, COLORREF color)
+{
+    for (int style : styles)
+        Sci(SCI_STYLESETFORE, style, color);
+}
+
+void SetStyleBack(std::initializer_list<int> styles, COLORREF color)
+{
+    for (int style : styles)
+        Sci(SCI_STYLESETBACK, style, color);
+}
+
+void SetStyleBold(std::initializer_list<int> styles, bool bold)
+{
+    for (int style : styles)
+        Sci(SCI_STYLESETBOLD, style, bold ? 1 : 0);
+}
+
+void SetStyleItalic(std::initializer_list<int> styles, bool italic)
+{
+    for (int style : styles)
+        Sci(SCI_STYLESETITALIC, style, italic ? 1 : 0);
+}
+
+const LanguageDefinition* FindLanguageDefinition(int commandId)
+{
+    for (const LanguageDefinition& language : kLanguages)
+    {
+        if (language.commandId == commandId)
+            return &language;
+    }
+    return nullptr;
+}
+
+bool IsLanguageCommand(int commandId)
+{
+    return FindLanguageDefinition(commandId) != nullptr;
+}
+
+void ClearKeywordLists()
+{
+    for (uptr_t index = 0; index < 8; ++index)
+        Sci(SCI_SETKEYWORDS, index, reinterpret_cast<sptr_t>(""));
+}
+
+void ApplyBaseEditorStyles()
+{
+    Sci(SCI_STYLESETBACK, STYLE_DEFAULT, ThemeEditorBack());
+    Sci(SCI_STYLESETFORE, STYLE_DEFAULT, ThemeEditorText());
+    Sci(SCI_STYLESETFONT, STYLE_DEFAULT, reinterpret_cast<sptr_t>("Consolas"));
+    Sci(SCI_STYLESETSIZE, STYLE_DEFAULT, kEditorFontSize);
+    Sci(SCI_STYLECLEARALL, 0, 0);
+
+    Sci(SCI_STYLESETFONT, STYLE_CONTROLCHAR, reinterpret_cast<sptr_t>("Consolas"));
+    Sci(SCI_STYLESETSIZE, STYLE_CONTROLCHAR, kEditorFontSize);
+    Sci(SCI_STYLESETFORE, STYLE_CONTROLCHAR, ThemeInvisible());
+    Sci(SCI_STYLESETBACK, STYLE_CONTROLCHAR, ThemeEditorBack());
+
+    Sci(SCI_STYLESETBACK, STYLE_LINENUMBER, ThemeEditorBack());
+    Sci(SCI_STYLESETFORE, STYLE_LINENUMBER, ThemeLineNumber());
+    Sci(SCI_STYLESETBACK, STYLE_INDENTGUIDE, ThemeEditorBack());
+    Sci(SCI_STYLESETFORE, STYLE_INDENTGUIDE, ThemeInvisible());
+    Sci(SCI_STYLESETBACK, STYLE_BRACELIGHT, RGB(0, 122, 204));
+    Sci(SCI_STYLESETFORE, STYLE_BRACELIGHT, RGB(255, 255, 255));
+    Sci(SCI_STYLESETBOLD, STYLE_BRACELIGHT, 1);
+    Sci(SCI_STYLESETBACK, STYLE_BRACEBAD, ThemeEditorBack());
+    Sci(SCI_STYLESETFORE, STYLE_BRACEBAD, ThemeError());
+    Sci(SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER);
+    Sci(SCI_SETMARGINWIDTHN, 0, 56);
+    Sci(SCI_SETMARGINBACKN, 0, ThemeEditorBack());
+    Sci(SCI_SETTABWIDTH, 4, 0);
+    Sci(SCI_SETINDENT, 4, 0);
+    Sci(SCI_SETUSETABS, 0, 0);
+    Sci(SCI_SETINDENTATIONGUIDES, SC_IV_LOOKBOTH, 0);
+    Sci(SCI_SETCARETFORE, ThemeCaret(), 0);
+    Sci(SCI_SETCARETWIDTH, 2, 0);
+    Sci(SCI_SETCARETLINEVISIBLE, TRUE, 0);
+    Sci(SCI_SETCARETLINEBACK, ThemeCurrentLineBack(), 0);
+    Sci(SCI_SETSELFORE, TRUE, ThemeEditorText());
+    Sci(SCI_SETSELBACK, TRUE, ThemeSelectionBack());
+    Sci(SCI_SETWHITESPACEFORE, TRUE, ThemeInvisible());
+    Sci(SCI_SETWHITESPACEBACK, TRUE, ThemeEditorBack());
+    Sci(SCI_SETWHITESPACESIZE, 2, 0);
+    Sci(SCI_SETEDGECOLOUR, ThemeInvisible(), 0);
+    ApplyEditorViewOptions();
+    ConfigureWordHighlightIndicator();
+}
+
+void ApplyCppLikeStyles()
+{
+    SetStyleFore({ SCE_C_COMMENT, SCE_C_COMMENTLINE, SCE_C_COMMENTDOC, SCE_C_COMMENTLINEDOC,
+        SCE_C_COMMENTDOCKEYWORD, SCE_C_PREPROCESSORCOMMENT, SCE_C_PREPROCESSORCOMMENTDOC, SCE_C_TASKMARKER }, ThemeComment());
+    SetStyleFore({ SCE_C_WORD }, ThemeKeyword());
+    SetStyleFore({ SCE_C_WORD2, SCE_C_GLOBALCLASS, SCE_C_UUID }, ThemeType());
+    SetStyleFore({ SCE_C_IDENTIFIER }, ThemeEditorText());
+    SetStyleFore({ SCE_C_STRING, SCE_C_CHARACTER, SCE_C_STRINGRAW, SCE_C_VERBATIM,
+        SCE_C_HASHQUOTEDSTRING, SCE_C_USERLITERAL }, ThemeString());
+    SetStyleFore({ SCE_C_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_C_PREPROCESSOR }, ThemeControlKeyword());
+    SetStyleFore({ SCE_C_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_C_REGEX, SCE_C_ESCAPESEQUENCE }, ThemeEscape());
+    SetStyleFore({ SCE_C_COMMENTDOCKEYWORDERROR, SCE_C_STRINGEOL }, ThemeError());
+}
+
+void ApplyPythonStyles()
+{
+    SetStyleFore({ SCE_P_COMMENTLINE, SCE_P_COMMENTBLOCK }, ThemeComment());
+    SetStyleFore({ SCE_P_WORD }, ThemeKeyword());
+    SetStyleFore({ SCE_P_WORD2, SCE_P_ATTRIBUTE }, ThemeVariable());
+    SetStyleFore({ SCE_P_STRING, SCE_P_CHARACTER, SCE_P_TRIPLE, SCE_P_TRIPLEDOUBLE,
+        SCE_P_FSTRING, SCE_P_FCHARACTER, SCE_P_FTRIPLE, SCE_P_FTRIPLEDOUBLE }, ThemeString());
+    SetStyleFore({ SCE_P_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_P_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_P_CLASSNAME }, ThemeType());
+    SetStyleFore({ SCE_P_DEFNAME }, ThemeFunction());
+    SetStyleFore({ SCE_P_DECORATOR }, ThemeControlKeyword());
+    SetStyleFore({ SCE_P_STRINGEOL }, ThemeError());
+}
+
+void ApplyHyperTextStyles()
+{
+    SetStyleFore({ SCE_H_TAG, SCE_H_TAGEND, SCE_H_XMLSTART, SCE_H_XMLEND, SCE_H_SCRIPT }, ThemeTag());
+    SetStyleFore({ SCE_H_ATTRIBUTE, SCE_H_VALUE }, ThemeVariable());
+    SetStyleFore({ SCE_H_DOUBLESTRING, SCE_H_SINGLESTRING, SCE_H_SGML_DOUBLESTRING, SCE_H_SGML_SIMPLESTRING }, ThemeString());
+    SetStyleFore({ SCE_H_COMMENT, SCE_H_XCCOMMENT, SCE_H_SGML_COMMENT, SCE_H_SGML_1ST_PARAM_COMMENT }, ThemeComment());
+    SetStyleFore({ SCE_H_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_H_ENTITY, SCE_H_SGML_ENTITY, SCE_H_QUESTION, SCE_H_CDATA }, ThemeControlKeyword());
+    SetStyleFore({ SCE_H_TAGUNKNOWN, SCE_H_ATTRIBUTEUNKNOWN, SCE_H_SGML_ERROR }, ThemeError());
+
+    SetStyleFore({ SCE_HJ_WORD, SCE_HJ_KEYWORD }, ThemeKeyword());
+    SetStyleFore({ SCE_HJ_COMMENT, SCE_HJ_COMMENTLINE, SCE_HJ_COMMENTDOC }, ThemeComment());
+    SetStyleFore({ SCE_HJ_DOUBLESTRING, SCE_HJ_SINGLESTRING, SCE_HJ_TEMPLATELITERAL }, ThemeString());
+    SetStyleFore({ SCE_HJ_REGEX }, ThemeEscape());
+    SetStyleFore({ SCE_HJ_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_HJ_SYMBOLS }, ThemeOperator());
+
+    SetStyleFore({ SCE_HPHP_WORD }, ThemeKeyword());
+    SetStyleFore({ SCE_HPHP_VARIABLE, SCE_HPHP_COMPLEX_VARIABLE }, ThemeVariable());
+    SetStyleFore({ SCE_HPHP_HSTRING, SCE_HPHP_SIMPLESTRING, SCE_HPHP_HSTRING_VARIABLE }, ThemeString());
+    SetStyleFore({ SCE_HPHP_COMMENT, SCE_HPHP_COMMENTLINE }, ThemeComment());
+    SetStyleFore({ SCE_HPHP_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_HPHP_OPERATOR }, ThemeOperator());
+}
+
+void ApplyCssStyles()
+{
+    SetStyleFore({ SCE_CSS_COMMENT }, ThemeComment());
+    SetStyleFore({ SCE_CSS_TAG, SCE_CSS_CLASS, SCE_CSS_ID }, ThemeCssSelector());
+    SetStyleFore({ SCE_CSS_IDENTIFIER, SCE_CSS_IDENTIFIER2, SCE_CSS_IDENTIFIER3,
+        SCE_CSS_EXTENDED_IDENTIFIER, SCE_CSS_VARIABLE }, ThemeVariable());
+    SetStyleFore({ SCE_CSS_VALUE, SCE_CSS_IMPORTANT }, ThemeString());
+    SetStyleFore({ SCE_CSS_DIRECTIVE, SCE_CSS_GROUP_RULE }, ThemeControlKeyword());
+    SetStyleFore({ SCE_CSS_PSEUDOCLASS, SCE_CSS_PSEUDOELEMENT, SCE_CSS_EXTENDED_PSEUDOCLASS,
+        SCE_CSS_EXTENDED_PSEUDOELEMENT }, ThemeControlKeyword());
+    SetStyleFore({ SCE_CSS_DOUBLESTRING, SCE_CSS_SINGLESTRING, SCE_CSS_ATTRIBUTE }, ThemeString());
+    SetStyleFore({ SCE_CSS_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_CSS_UNKNOWN_IDENTIFIER, SCE_CSS_UNKNOWN_PSEUDOCLASS }, ThemeError());
+}
+
+void ApplyJsonStyles()
+{
+    SetStyleFore({ SCE_JSON_PROPERTYNAME }, ThemeVariable());
+    SetStyleFore({ SCE_JSON_STRING, SCE_JSON_URI, SCE_JSON_COMPACTIRI }, ThemeString());
+    SetStyleFore({ SCE_JSON_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_JSON_KEYWORD, SCE_JSON_LDKEYWORD }, ThemeKeyword());
+    SetStyleFore({ SCE_JSON_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_JSON_LINECOMMENT, SCE_JSON_BLOCKCOMMENT }, ThemeComment());
+    SetStyleFore({ SCE_JSON_ESCAPESEQUENCE }, ThemeEscape());
+    SetStyleFore({ SCE_JSON_ERROR, SCE_JSON_STRINGEOL }, ThemeError());
+}
+
+void ApplySqlStyles()
+{
+    SetStyleFore({ SCE_SQL_COMMENT, SCE_SQL_COMMENTLINE, SCE_SQL_COMMENTDOC,
+        SCE_SQL_COMMENTLINEDOC, SCE_SQL_SQLPLUS_COMMENT }, ThemeComment());
+    SetStyleFore({ SCE_SQL_WORD }, ThemeKeyword());
+    SetStyleFore({ SCE_SQL_WORD2, SCE_SQL_USER1, SCE_SQL_USER2, SCE_SQL_USER3, SCE_SQL_USER4 }, ThemeType());
+    SetStyleFore({ SCE_SQL_STRING, SCE_SQL_CHARACTER, SCE_SQL_QUOTEDIDENTIFIER }, ThemeString());
+    SetStyleFore({ SCE_SQL_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_SQL_OPERATOR, SCE_SQL_QOPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_SQL_SQLPLUS, SCE_SQL_SQLPLUS_PROMPT }, ThemeControlKeyword());
+    SetStyleFore({ SCE_SQL_COMMENTDOCKEYWORDERROR }, ThemeError());
+}
+
+void ApplyBashStyles()
+{
+    SetStyleFore({ SCE_SH_COMMENTLINE }, ThemeComment());
+    SetStyleFore({ SCE_SH_WORD }, ThemeKeyword());
+    SetStyleFore({ SCE_SH_STRING, SCE_SH_CHARACTER, SCE_SH_BACKTICKS, SCE_SH_HERE_Q }, ThemeString());
+    SetStyleFore({ SCE_SH_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_SH_OPERATOR, SCE_SH_HERE_DELIM }, ThemeOperator());
+    SetStyleFore({ SCE_SH_SCALAR, SCE_SH_PARAM }, ThemeVariable());
+    SetStyleFore({ SCE_SH_ERROR }, ThemeError());
+}
+
+void ApplyPowerShellStyles()
+{
+    SetStyleFore({ SCE_POWERSHELL_COMMENT, SCE_POWERSHELL_COMMENTSTREAM, SCE_POWERSHELL_COMMENTDOCKEYWORD }, ThemeComment());
+    SetStyleFore({ SCE_POWERSHELL_KEYWORD, SCE_POWERSHELL_CMDLET, SCE_POWERSHELL_ALIAS,
+        SCE_POWERSHELL_USER1 }, ThemeKeyword());
+    SetStyleFore({ SCE_POWERSHELL_FUNCTION }, ThemeFunction());
+    SetStyleFore({ SCE_POWERSHELL_STRING, SCE_POWERSHELL_CHARACTER,
+        SCE_POWERSHELL_HERE_STRING, SCE_POWERSHELL_HERE_CHARACTER }, ThemeString());
+    SetStyleFore({ SCE_POWERSHELL_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_POWERSHELL_VARIABLE }, ThemeVariable());
+    SetStyleFore({ SCE_POWERSHELL_OPERATOR }, ThemeOperator());
+}
+
+void ApplyRustStyles()
+{
+    SetStyleFore({ SCE_RUST_COMMENTBLOCK, SCE_RUST_COMMENTLINE, SCE_RUST_COMMENTBLOCKDOC, SCE_RUST_COMMENTLINEDOC }, ThemeComment());
+    SetStyleFore({ SCE_RUST_WORD, SCE_RUST_WORD3, SCE_RUST_WORD4, SCE_RUST_WORD5, SCE_RUST_WORD6, SCE_RUST_WORD7 }, ThemeKeyword());
+    SetStyleFore({ SCE_RUST_WORD2 }, ThemeType());
+    SetStyleFore({ SCE_RUST_STRING, SCE_RUST_STRINGR, SCE_RUST_CHARACTER, SCE_RUST_BYTESTRING,
+        SCE_RUST_BYTESTRINGR, SCE_RUST_BYTECHARACTER, SCE_RUST_CSTRING, SCE_RUST_CSTRINGR }, ThemeString());
+    SetStyleFore({ SCE_RUST_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_RUST_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_RUST_LIFETIME, SCE_RUST_MACRO }, ThemeControlKeyword());
+    SetStyleFore({ SCE_RUST_LEXERROR }, ThemeError());
+}
+
+void ApplyLuaStyles()
+{
+    SetStyleFore({ SCE_LUA_COMMENT, SCE_LUA_COMMENTLINE, SCE_LUA_COMMENTDOC }, ThemeComment());
+    SetStyleFore({ SCE_LUA_WORD }, ThemeKeyword());
+    SetStyleFore({ SCE_LUA_WORD2, SCE_LUA_WORD3, SCE_LUA_WORD4, SCE_LUA_WORD5, SCE_LUA_WORD6, SCE_LUA_WORD7, SCE_LUA_WORD8 }, ThemeFunction());
+    SetStyleFore({ SCE_LUA_STRING, SCE_LUA_CHARACTER, SCE_LUA_LITERALSTRING }, ThemeString());
+    SetStyleFore({ SCE_LUA_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_LUA_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_LUA_PREPROCESSOR, SCE_LUA_LABEL }, ThemeControlKeyword());
+    SetStyleFore({ SCE_LUA_STRINGEOL }, ThemeError());
+}
+
+void ApplyRubyStyles()
+{
+    SetStyleFore({ SCE_RB_COMMENTLINE, SCE_RB_POD, SCE_RB_DATASECTION }, ThemeComment());
+    SetStyleFore({ SCE_RB_WORD, SCE_RB_WORD_DEMOTED }, ThemeKeyword());
+    SetStyleFore({ SCE_RB_STRING, SCE_RB_CHARACTER, SCE_RB_BACKTICKS, SCE_RB_HERE_Q, SCE_RB_HERE_QQ,
+        SCE_RB_HERE_QX, SCE_RB_STRING_Q, SCE_RB_STRING_QQ, SCE_RB_STRING_QX, SCE_RB_STRING_QW,
+        SCE_RB_STRING_W, SCE_RB_STRING_I, SCE_RB_STRING_QI, SCE_RB_STRING_QS }, ThemeString());
+    SetStyleFore({ SCE_RB_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_RB_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_RB_CLASSNAME, SCE_RB_MODULE_NAME }, ThemeType());
+    SetStyleFore({ SCE_RB_DEFNAME }, ThemeFunction());
+    SetStyleFore({ SCE_RB_GLOBAL, SCE_RB_INSTANCE_VAR, SCE_RB_CLASS_VAR, SCE_RB_SYMBOL,
+        SCE_RB_STDIN, SCE_RB_STDOUT, SCE_RB_STDERR }, ThemeVariable());
+    SetStyleFore({ SCE_RB_REGEX }, ThemeEscape());
+    SetStyleFore({ SCE_RB_ERROR }, ThemeError());
+}
+
+void ApplyMarkdownStyles()
+{
+    SetStyleFore({ SCE_MARKDOWN_HEADER1, SCE_MARKDOWN_HEADER2, SCE_MARKDOWN_HEADER3,
+        SCE_MARKDOWN_HEADER4, SCE_MARKDOWN_HEADER5, SCE_MARKDOWN_HEADER6 }, ThemeKeyword());
+    SetStyleBold({ SCE_MARKDOWN_HEADER1, SCE_MARKDOWN_HEADER2, SCE_MARKDOWN_HEADER3,
+        SCE_MARKDOWN_HEADER4, SCE_MARKDOWN_HEADER5, SCE_MARKDOWN_HEADER6 }, true);
+    SetStyleFore({ SCE_MARKDOWN_STRONG1, SCE_MARKDOWN_STRONG2 }, ThemeFunction());
+    SetStyleBold({ SCE_MARKDOWN_STRONG1, SCE_MARKDOWN_STRONG2 }, true);
+    SetStyleFore({ SCE_MARKDOWN_EM1, SCE_MARKDOWN_EM2 }, ThemeFunction());
+    SetStyleItalic({ SCE_MARKDOWN_EM1, SCE_MARKDOWN_EM2 }, true);
+    SetStyleFore({ SCE_MARKDOWN_ULIST_ITEM, SCE_MARKDOWN_OLIST_ITEM, SCE_MARKDOWN_BLOCKQUOTE,
+        SCE_MARKDOWN_HRULE, SCE_MARKDOWN_PRECHAR }, ThemeControlKeyword());
+    SetStyleFore({ SCE_MARKDOWN_LINK }, ThemeLink());
+    SetStyleFore({ SCE_MARKDOWN_CODE, SCE_MARKDOWN_CODE2, SCE_MARKDOWN_CODEBK }, ThemeString());
+    SetStyleBack({ SCE_MARKDOWN_CODE, SCE_MARKDOWN_CODE2, SCE_MARKDOWN_CODEBK }, ThemeMarkdownCodeBack());
+    SetStyleFore({ SCE_MARKDOWN_STRIKEOUT }, ThemeLineNumber());
+}
+
+void ApplySyntaxFamilyStyles(SyntaxFamily family)
+{
+    switch (family)
+    {
+    case SyntaxFamily::CppLike:
+        ApplyCppLikeStyles();
+        break;
+    case SyntaxFamily::Python:
+        ApplyPythonStyles();
+        break;
+    case SyntaxFamily::HyperText:
+        ApplyHyperTextStyles();
+        break;
+    case SyntaxFamily::Css:
+        ApplyCssStyles();
+        break;
+    case SyntaxFamily::Json:
+        ApplyJsonStyles();
+        break;
+    case SyntaxFamily::Sql:
+        ApplySqlStyles();
+        break;
+    case SyntaxFamily::Bash:
+        ApplyBashStyles();
+        break;
+    case SyntaxFamily::PowerShell:
+        ApplyPowerShellStyles();
+        break;
+    case SyntaxFamily::Rust:
+        ApplyRustStyles();
+        break;
+    case SyntaxFamily::Lua:
+        ApplyLuaStyles();
+        break;
+    case SyntaxFamily::Ruby:
+        ApplyRubyStyles();
+        break;
+    case SyntaxFamily::Markdown:
+        ApplyMarkdownStyles();
+        break;
+    case SyntaxFamily::Plain:
+    default:
+        break;
+    }
+}
+
+void UpdateLanguageMenuCheck()
+{
+    HMENU hMenu = GetMenu(hWnd);
+    if (!hMenu)
+        return;
+
+    HMENU hLanguageMenu = GetSubMenu(hMenu, kLanguageMenuIndex);
+    if (!hLanguageMenu)
+        return;
+
+    CheckMenuRadioItem(hLanguageMenu, IDM_LANG_TEXT, IDM_LANG_MARKDOWN, g_currentLanguageCommand, MF_BYCOMMAND);
+    DrawMenuBar(hWnd);
+}
+
+void ApplyLanguage(int commandId)
+{
+    const LanguageDefinition* language = FindLanguageDefinition(commandId);
+    if (!language)
+        return;
+
+    ClearKeywordLists();
+
+    ILexer5* lexer = nullptr;
+    if (language->lexerName)
+        lexer = CreateLexer(language->lexerName);
+
+    Sci(SCI_SETILEXER, 0, reinterpret_cast<sptr_t>(lexer));
+    ApplyBaseEditorStyles();
+
+    for (uptr_t index = 0; index < language->keywords.size(); ++index)
+    {
+        const char* keywords = language->keywords[index] ? language->keywords[index] : "";
+        Sci(SCI_SETKEYWORDS, index, reinterpret_cast<sptr_t>(keywords));
+    }
+
+    ApplySyntaxFamilyStyles(language->family);
+    Sci(SCI_COLOURISE, 0, -1);
+
+    g_currentLanguageCommand = commandId;
+    UpdateLanguageMenuCheck();
+}
+
+void InitScintillaEditor()
+{
+    Sci(SCI_SETCODEPAGE, SC_CP_UTF8, 0);
+    ConfigureControlCharacterRepresentations();
+    ApplyBaseEditorStyles();
+    ApplyLanguage(IDM_LANG_TEXT);
+    UpdateViewMenuCheck();
+}
+
+void ApplyAppTheme()
+{
+    DeleteObject(g_hPopupBackBrush);
+    DeleteObject(g_hPopupSurfaceBrush);
+    DeleteObject(g_hMenuBackBrush);
+    g_hPopupBackBrush = nullptr;
+    g_hPopupSurfaceBrush = nullptr;
+    g_hMenuBackBrush = nullptr;
+
+    ApplyWindowChromeTheme(hWnd);
+    ApplyMainMenuTheme();
+
+    if (g_hFolderTree)
+    {
+        ApplyFolderTreeTheme();
+        InitializeFolderTreeImageList();
+        InvalidateFolderTree();
+    }
+
+    if (g_hSci)
+    {
+        ApplyControlTheme(g_hSci);
+        ApplyLanguage(g_currentLanguageCommand);
+    }
+
+    if (hWnd)
+        InvalidateRect(hWnd, nullptr, TRUE);
+    if (g_findWindow)
+        g_findWindow->UpdateThemeAndLanguage(IsDarkTheme(), g_appLanguage == AppLanguage::Chinese);
+    if (g_hSettingsWindow && IsWindow(g_hSettingsWindow))
+    {
+        ApplyWindowChromeTheme(g_hSettingsWindow);
+        RedrawWindow(g_hSettingsWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+    }
+    if (g_hAboutWindow && IsWindow(g_hAboutWindow))
+    {
+        ApplyWindowChromeTheme(g_hAboutWindow);
+        RedrawWindow(g_hAboutWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+    }
+    InvalidateTabBar();
+    InvalidateStatusBar();
+}
+
+std::wstring FileNameFromPath(const std::wstring& path)
+{
+    const size_t pos = path.find_last_of(L"\\/");
+    if (pos == std::wstring::npos)
+        return path;
+    std::wstring name = path.substr(pos + 1);
+    return name.empty() ? path : name;
+}
+
+std::wstring ToLower(std::wstring value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
+        return static_cast<wchar_t>(towlower(ch));
+    });
+    return value;
+}
+
+std::wstring ExtensionFromPath(const std::wstring& path)
+{
+    const size_t slash = path.find_last_of(L"\\/");
+    const size_t dot = path.find_last_of(L'.');
+    if (dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash))
+        return L"";
+    return ToLower(path.substr(dot));
+}
+
+int DetectLanguageFromPath(const std::wstring& path)
+{
+    const std::wstring ext = ExtensionFromPath(path);
+    if (ext == L".c" || ext == L".cc" || ext == L".cpp" || ext == L".cxx" ||
+        ext == L".h" || ext == L".hh" || ext == L".hpp" || ext == L".hxx")
+        return IDM_LANG_CPP;
+    if (ext == L".cs")
+        return IDM_LANG_CSHARP;
+    if (ext == L".java")
+        return IDM_LANG_JAVA;
+    if (ext == L".js" || ext == L".jsx" || ext == L".mjs" || ext == L".cjs")
+        return IDM_LANG_JAVASCRIPT;
+    if (ext == L".ts" || ext == L".tsx")
+        return IDM_LANG_TYPESCRIPT;
+    if (ext == L".py" || ext == L".pyw")
+        return IDM_LANG_PYTHON;
+    if (ext == L".htm" || ext == L".html")
+        return IDM_LANG_HTML;
+    if (ext == L".xml" || ext == L".xaml" || ext == L".svg")
+        return IDM_LANG_XML;
+    if (ext == L".css" || ext == L".scss" || ext == L".less")
+        return IDM_LANG_CSS;
+    if (ext == L".json" || ext == L".jsonc")
+        return IDM_LANG_JSON;
+    if (ext == L".sql")
+        return IDM_LANG_SQL;
+    if (ext == L".sh" || ext == L".bash" || ext == L".zsh")
+        return IDM_LANG_BASH;
+    if (ext == L".ps1" || ext == L".psm1" || ext == L".psd1")
+        return IDM_LANG_POWERSHELL;
+    if (ext == L".rs")
+        return IDM_LANG_RUST;
+    if (ext == L".lua")
+        return IDM_LANG_LUA;
+    if (ext == L".rb")
+        return IDM_LANG_RUBY;
+    if (ext == L".md" || ext == L".markdown")
+        return IDM_LANG_MARKDOWN;
+    return IDM_LANG_TEXT;
+}
+
+bool IsActiveTabValid()
+{
+    return g_activeTabIndex >= 0 && g_activeTabIndex < static_cast<int>(g_tabs.size());
+}
+
+std::string GetEditorText()
+{
+    const sptr_t length = Sci(SCI_GETLENGTH);
+    if (length <= 0)
+        return {};
+
+    std::string text(static_cast<size_t>(length), '\0');
+    std::vector<char> buffer(static_cast<size_t>(length) + 1);
+    Sci(SCI_GETTEXT, static_cast<uptr_t>(buffer.size()), reinterpret_cast<sptr_t>(buffer.data()));
+    text.assign(buffer.data(), static_cast<size_t>(length));
+    return text;
+}
+
+void SetEditorText(const std::string& text)
+{
+    Sci(SCI_SETTEXT, 0, reinterpret_cast<sptr_t>(text.c_str()));
+}
+
+class ScopedRedrawPause
+{
+public:
+    explicit ScopedRedrawPause(HWND window) : window_(window)
+    {
+        if (!window_)
+            return;
+
+        auto& depths = PauseDepths();
+        auto entry = std::find_if(depths.begin(), depths.end(), [this](const auto& candidate) {
+            return candidate.first == window_;
+        });
+        if (entry == depths.end())
+        {
+            depths.push_back({ window_, 1 });
+            SendMessageW(window_, WM_SETREDRAW, FALSE, 0);
+        }
+        else
+        {
+            ++entry->second;
+        }
+    }
+
+    ~ScopedRedrawPause()
+    {
+        if (!window_)
+            return;
+
+        auto& depths = PauseDepths();
+        auto entry = std::find_if(depths.begin(), depths.end(), [this](const auto& candidate) {
+            return candidate.first == window_;
+        });
+        if (entry == depths.end())
+            return;
+
+        --entry->second;
+        if (entry->second > 0)
+            return;
+
+        depths.erase(entry);
+        SendMessageW(window_, WM_SETREDRAW, TRUE, 0);
+        RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    }
+
+    ScopedRedrawPause(const ScopedRedrawPause&) = delete;
+    ScopedRedrawPause& operator=(const ScopedRedrawPause&) = delete;
+
+private:
+    static std::vector<std::pair<HWND, int>>& PauseDepths()
+    {
+        static std::vector<std::pair<HWND, int>> depths;
+        return depths;
+    }
+
+    HWND window_ = nullptr;
+};
+
+std::string WideToUtf8(const std::wstring& text)
+{
+    if (text.empty())
+        return {};
+
+    const int required = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (required <= 1)
+        return {};
+
+    std::string result(static_cast<size_t>(required), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, result.data(), required, nullptr, nullptr);
+    result.pop_back();
+    return result;
+}
+
+std::wstring Utf8ToWide(const std::string& text)
+{
+    if (text.empty())
+        return {};
+
+    const int required = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (required <= 0)
+        return {};
+
+    std::wstring result(static_cast<size_t>(required), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), required);
+    return result;
+}
+
+std::string WideToUtf8Bytes(const wchar_t* text, int length)
+{
+    if (!text || length <= 0)
+        return {};
+
+    const int required = WideCharToMultiByte(CP_UTF8, 0, text, length, nullptr, 0, nullptr, nullptr);
+    if (required <= 0)
+        return {};
+
+    std::string result(static_cast<size_t>(required), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text, length, result.data(), required, nullptr, nullptr);
+    return result;
+}
+
+std::wstring BytesToWide(const char* text, int length, UINT codePage)
+{
+    if (!text || length <= 0)
+        return {};
+
+    const DWORD flags = codePage == CP_UTF8 ? MB_ERR_INVALID_CHARS : 0;
+    const int required = MultiByteToWideChar(codePage, flags, text, length, nullptr, 0);
+    if (required <= 0)
+        return {};
+
+    std::wstring result(static_cast<size_t>(required), L'\0');
+    MultiByteToWideChar(codePage, flags, text, length, result.data(), required);
+    return result;
+}
+
+bool IsValidUtf8Bytes(const char* text, int length)
+{
+    if (length <= 0)
+        return true;
+    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, length, nullptr, 0) > 0;
+}
+
+std::wstring Utf16BytesToWide(const char* bytes, size_t byteCount, bool bigEndian)
+{
+    std::wstring result;
+    result.reserve(byteCount / 2);
+    for (size_t index = 0; index + 1 < byteCount; index += 2)
+    {
+        const unsigned char first = static_cast<unsigned char>(bytes[index]);
+        const unsigned char second = static_cast<unsigned char>(bytes[index + 1]);
+        const wchar_t ch = static_cast<wchar_t>(bigEndian ? ((first << 8) | second) : ((second << 8) | first));
+        result.push_back(ch);
+    }
+    return result;
+}
+
+void AppendUtf16Bytes(std::vector<char>& output, const std::wstring& text, bool bigEndian)
+{
+    output.reserve(output.size() + (text.size() * 2));
+    for (wchar_t ch : text)
+    {
+        const unsigned short value = static_cast<unsigned short>(ch);
+        if (bigEndian)
+        {
+            output.push_back(static_cast<char>((value >> 8) & 0xff));
+            output.push_back(static_cast<char>(value & 0xff));
+        }
+        else
+        {
+            output.push_back(static_cast<char>(value & 0xff));
+            output.push_back(static_cast<char>((value >> 8) & 0xff));
+        }
+    }
+}
+
+std::string DecodeFileBytesToUtf8(const std::vector<char>& content, size_t byteCount, DocumentEncoding& encoding)
+{
+    if (byteCount >= 3 &&
+        static_cast<unsigned char>(content[0]) == 0xEF &&
+        static_cast<unsigned char>(content[1]) == 0xBB &&
+        static_cast<unsigned char>(content[2]) == 0xBF)
+    {
+        encoding = DocumentEncoding::Utf8Bom;
+        return std::string(content.data() + 3, byteCount - 3);
+    }
+
+    if (byteCount >= 2 &&
+        static_cast<unsigned char>(content[0]) == 0xFF &&
+        static_cast<unsigned char>(content[1]) == 0xFE)
+    {
+        encoding = DocumentEncoding::Utf16LE;
+        return WideToUtf8(Utf16BytesToWide(content.data() + 2, byteCount - 2, false));
+    }
+
+    if (byteCount >= 2 &&
+        static_cast<unsigned char>(content[0]) == 0xFE &&
+        static_cast<unsigned char>(content[1]) == 0xFF)
+    {
+        encoding = DocumentEncoding::Utf16BE;
+        return WideToUtf8(Utf16BytesToWide(content.data() + 2, byteCount - 2, true));
+    }
+
+    if (IsValidUtf8Bytes(content.data(), static_cast<int>(byteCount)))
+    {
+        encoding = DocumentEncoding::Utf8;
+        return std::string(content.data(), byteCount);
+    }
+
+    encoding = DocumentEncoding::Ansi;
+    return WideToUtf8(BytesToWide(content.data(), static_cast<int>(byteCount), CP_ACP));
+}
+
+std::vector<char> EncodeUtf8ForFile(const std::string& utf8Text, DocumentEncoding encoding)
+{
+    std::vector<char> output;
+    if (encoding == DocumentEncoding::Utf8)
+    {
+        output.assign(utf8Text.begin(), utf8Text.end());
+        return output;
+    }
+
+    if (encoding == DocumentEncoding::Utf8Bom)
+    {
+        output = { static_cast<char>(0xEF), static_cast<char>(0xBB), static_cast<char>(0xBF) };
+        output.insert(output.end(), utf8Text.begin(), utf8Text.end());
+        return output;
+    }
+
+    const std::wstring wideText = Utf8ToWide(utf8Text);
+    if (encoding == DocumentEncoding::Ansi)
+    {
+        if (wideText.empty())
+            return output;
+
+        const int required = WideCharToMultiByte(CP_ACP, 0, wideText.data(), static_cast<int>(wideText.size()), nullptr, 0, nullptr, nullptr);
+        if (required <= 0)
+            return output;
+
+        output.resize(static_cast<size_t>(required));
+        WideCharToMultiByte(CP_ACP, 0, wideText.data(), static_cast<int>(wideText.size()), output.data(), required, nullptr, nullptr);
+        return output;
+    }
+
+    if (encoding == DocumentEncoding::Utf16LE)
+    {
+        output = { static_cast<char>(0xFF), static_cast<char>(0xFE) };
+        AppendUtf16Bytes(output, wideText, false);
+    }
+    else if (encoding == DocumentEncoding::Utf16BE)
+    {
+        output = { static_cast<char>(0xFE), static_cast<char>(0xFF) };
+        AppendUtf16Bytes(output, wideText, true);
+    }
+    return output;
+}
+
+const wchar_t* EncodingDisplayName(DocumentEncoding encoding)
+{
+    switch (encoding)
+    {
+    case DocumentEncoding::Utf8Bom:
+        return L"UTF-8 BOM";
+    case DocumentEncoding::Ansi:
+        return L"ANSI";
+    case DocumentEncoding::Utf16LE:
+        return L"UTF-16 LE";
+    case DocumentEncoding::Utf16BE:
+        return L"UTF-16 BE";
+    case DocumentEncoding::Utf8:
+    default:
+        return L"UTF-8";
+    }
+}
+
+const wchar_t* EolDisplayName(int eolMode)
+{
+    switch (eolMode)
+    {
+    case SC_EOL_LF:
+        return L"Unix (LF)";
+    case SC_EOL_CR:
+        return L"macOS (CR)";
+    case SC_EOL_CRLF:
+    default:
+        return L"Windows (CRLF)";
+    }
+}
+
+int DetectEolModeFromText(const std::string& text)
+{
+    const size_t crlf = text.find("\r\n");
+    const size_t lf = text.find('\n');
+    const size_t cr = text.find('\r');
+
+    if (crlf != std::string::npos)
+        return SC_EOL_CRLF;
+    if (lf != std::string::npos)
+        return SC_EOL_LF;
+    if (cr != std::string::npos)
+        return SC_EOL_CR;
+    return SC_EOL_CRLF;
+}
+
+int GetScintillaSearchFlags(DWORD findOptions)
+{
+    int flags = SCFIND_NONE;
+    if (findOptions & FR_MATCHCASE)
+        flags |= SCFIND_MATCHCASE;
+    if (findOptions & FR_WHOLEWORD)
+        flags |= SCFIND_WHOLEWORD;
+    if (findOptions & kFindOptionRegex)
+        flags |= SCFIND_REGEXP | SCFIND_CXX11REGEX;
+    return flags;
+}
+
+sptr_t SearchTargetRange(sptr_t start, sptr_t end, const std::string& needle, DWORD findOptions)
+{
+    Sci(SCI_SETSEARCHFLAGS, GetScintillaSearchFlags(findOptions), 0);
+    Sci(SCI_SETTARGETRANGE, static_cast<uptr_t>(start), end);
+    return Sci(SCI_SEARCHINTARGET, static_cast<uptr_t>(needle.size()), reinterpret_cast<sptr_t>(needle.c_str()));
+}
+
+std::string GetEditorRangeText(sptr_t start, sptr_t end)
+{
+    if (!g_hSci || end <= start)
+        return {};
+
+    std::string text(static_cast<size_t>(end - start), '\0');
+    std::vector<char> buffer(static_cast<size_t>(end - start) + 1, '\0');
+    Sci_TextRange range{};
+    range.chrg.cpMin = static_cast<Sci_PositionCR>(start);
+    range.chrg.cpMax = static_cast<Sci_PositionCR>(end);
+    range.lpstrText = buffer.data();
+    Sci(SCI_GETTEXTRANGE, 0, reinterpret_cast<sptr_t>(&range));
+    text.assign(buffer.data(), static_cast<size_t>(end - start));
+    return text;
+}
+
+bool IsAsciiWordText(const std::string& text)
+{
+    if (text.empty())
+        return false;
+
+    for (unsigned char ch : text)
+    {
+        if (!std::isalnum(ch) && ch != '_')
+            return false;
+    }
+    return true;
+}
+
+void ClearWordHighlights()
+{
+    if (!g_hSci)
+        return;
+
+    Sci(SCI_SETINDICATORCURRENT, kWordHighlightIndicator, 0);
+    Sci(SCI_INDICATORCLEARRANGE, 0, Sci(SCI_GETTEXTLENGTH));
+    g_highlightedWord.clear();
+}
+
+void HighlightWordOccurrences(const std::string& word)
+{
+    ClearWordHighlights();
+    if (word.empty())
+        return;
+
+    g_highlightedWord = word;
+    const sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
+    sptr_t start = 0;
+    Sci(SCI_SETINDICATORCURRENT, kWordHighlightIndicator, 0);
+    Sci(SCI_SETINDICATORVALUE, 1, 0);
+
+    while (start < documentLength)
+    {
+        const sptr_t result = SearchTargetRange(start, documentLength, word, FR_MATCHCASE | FR_WHOLEWORD);
+        if (result < 0)
+            break;
+
+        const sptr_t targetStart = Sci(SCI_GETTARGETSTART);
+        const sptr_t targetEnd = Sci(SCI_GETTARGETEND);
+        if (targetEnd <= targetStart)
+            break;
+
+        Sci(SCI_INDICATORFILLRANGE, static_cast<uptr_t>(targetStart), targetEnd - targetStart);
+        start = targetEnd;
+    }
+}
+
+void HighlightSelectedWordOccurrences()
+{
+    const sptr_t selectionStart = Sci(SCI_GETSELECTIONSTART);
+    const sptr_t selectionEnd = Sci(SCI_GETSELECTIONEND);
+    if (selectionEnd <= selectionStart)
+    {
+        ClearWordHighlights();
+        return;
+    }
+
+    const sptr_t wordStart = Sci(SCI_WORDSTARTPOSITION, static_cast<uptr_t>(selectionStart), TRUE);
+    const sptr_t wordEnd = Sci(SCI_WORDENDPOSITION, static_cast<uptr_t>(selectionStart), TRUE);
+    if (wordStart != selectionStart || wordEnd != selectionEnd)
+    {
+        ClearWordHighlights();
+        return;
+    }
+
+    const std::string word = GetEditorRangeText(selectionStart, selectionEnd);
+    if (!IsAsciiWordText(word))
+    {
+        ClearWordHighlights();
+        return;
+    }
+
+    HighlightWordOccurrences(word);
+}
+
+bool SelectCurrentTarget(bool focusEditor)
+{
+    sptr_t targetStart = Sci(SCI_GETTARGETSTART);
+    sptr_t targetEnd = Sci(SCI_GETTARGETEND);
+    if (targetStart < 0 || targetEnd < 0)
+        return false;
+
+    const sptr_t selectionStart = (std::min)(targetStart, targetEnd);
+    const sptr_t selectionEnd = (std::max)(targetStart, targetEnd);
+    Sci(SCI_SETSEL, static_cast<uptr_t>(selectionStart), selectionEnd);
+    Sci(SCI_SCROLLCARET);
+    if (focusEditor)
+        SetFocus(g_hSci);
+    return true;
+}
+
+bool FindTextInEditor(const wchar_t* findText, DWORD findOptions, bool searchDown, bool wrap, bool focusEditor = true)
+{
+    const std::string needle = WideToUtf8(findText ? findText : L"");
+    if (needle.empty())
+        return false;
+
+    const sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
+    const sptr_t selectionStart = Sci(SCI_GETSELECTIONSTART);
+    const sptr_t selectionEnd = Sci(SCI_GETSELECTIONEND);
+    sptr_t result = -1;
+
+    if (searchDown)
+    {
+        result = SearchTargetRange(selectionEnd, documentLength, needle, findOptions);
+        if (result < 0 && wrap)
+            result = SearchTargetRange(0, selectionStart, needle, findOptions);
+    }
+    else
+    {
+        result = SearchTargetRange(selectionStart, 0, needle, findOptions);
+        if (result < 0 && wrap)
+            result = SearchTargetRange(documentLength, selectionEnd, needle, findOptions);
+    }
+
+    if (result < 0)
+    {
+        MessageBeep(MB_ICONINFORMATION);
+        return false;
+    }
+
+    return SelectCurrentTarget(focusEditor);
+}
+
+bool SelectionMatchesSearch(const std::string& needle, DWORD findOptions)
+{
+    const sptr_t selectionStart = Sci(SCI_GETSELECTIONSTART);
+    const sptr_t selectionEnd = Sci(SCI_GETSELECTIONEND);
+    if (selectionStart == selectionEnd)
+        return false;
+
+    const sptr_t start = (std::min)(selectionStart, selectionEnd);
+    const sptr_t end = (std::max)(selectionStart, selectionEnd);
+    const sptr_t result = SearchTargetRange(start, end, needle, findOptions);
+    return result == start && Sci(SCI_GETTARGETSTART) == start && Sci(SCI_GETTARGETEND) == end;
+}
+
+bool ReplaceCurrentSelection(const wchar_t* findText, const wchar_t* replaceText, DWORD findOptions)
+{
+    const std::string needle = WideToUtf8(findText ? findText : L"");
+    if (needle.empty() || !SelectionMatchesSearch(needle, findOptions))
+        return false;
+
+    const std::string replacement = WideToUtf8(replaceText ? replaceText : L"");
+    const sptr_t targetStart = Sci(SCI_GETTARGETSTART);
+    const unsigned int replaceMessage = (findOptions & kFindOptionRegex) ? SCI_REPLACETARGETRE : SCI_REPLACETARGET;
+    const sptr_t replacementLength = Sci(replaceMessage,
+        static_cast<uptr_t>(replacement.size()), reinterpret_cast<sptr_t>(replacement.c_str()));
+    if (replacementLength >= 0)
+        Sci(SCI_SETSEL, static_cast<uptr_t>(targetStart), targetStart + replacementLength);
+    SetActiveTabModified(true);
+    return true;
+}
+
+sptr_t PositionAfter(sptr_t position)
+{
+    const sptr_t next = Sci(SCI_POSITIONAFTER, static_cast<uptr_t>(position), 0);
+    return next > position ? next : position + 1;
+}
+
+int ReplaceAllMatches(const wchar_t* findText, const wchar_t* replaceText, DWORD findOptions)
+{
+    const std::string needle = WideToUtf8(findText ? findText : L"");
+    if (needle.empty())
+        return 0;
+
+    const std::string replacement = WideToUtf8(replaceText ? replaceText : L"");
+    int replacements = 0;
+    sptr_t start = 0;
+    sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
+
+    Sci(SCI_BEGINUNDOACTION);
+    while (start <= documentLength)
+    {
+        const sptr_t result = SearchTargetRange(start, documentLength, needle, findOptions);
+        if (result < 0)
+            break;
+
+        const sptr_t targetStart = Sci(SCI_GETTARGETSTART);
+        const sptr_t targetEnd = Sci(SCI_GETTARGETEND);
+        const unsigned int replaceMessage = (findOptions & kFindOptionRegex) ? SCI_REPLACETARGETRE : SCI_REPLACETARGET;
+        const sptr_t replacementLength = Sci(replaceMessage,
+            static_cast<uptr_t>(replacement.size()), reinterpret_cast<sptr_t>(replacement.c_str()));
+        ++replacements;
+
+        documentLength = Sci(SCI_GETTEXTLENGTH);
+        start = targetStart + (replacementLength > 0 ? replacementLength : 0);
+        if (start <= targetStart || targetEnd == targetStart)
+            start = PositionAfter(targetStart);
+    }
+    Sci(SCI_ENDUNDOACTION);
+
+    if (replacements > 0)
+        SetActiveTabModified(true);
+    else
+        MessageBeep(MB_ICONINFORMATION);
+
+    return replacements;
+}
+
+int CountMatches(const wchar_t* findText, DWORD findOptions)
+{
+    const std::string needle = WideToUtf8(findText ? findText : L"");
+    if (needle.empty())
+        return 0;
+
+    int count = 0;
+    sptr_t start = 0;
+    const sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
+
+    while (start <= documentLength)
+    {
+        const sptr_t result = SearchTargetRange(start, documentLength, needle, findOptions);
+        if (result < 0)
+            break;
+
+        ++count;
+        const sptr_t targetStart = Sci(SCI_GETTARGETSTART);
+        const sptr_t targetEnd = Sci(SCI_GETTARGETEND);
+        start = targetEnd > targetStart ? targetEnd : PositionAfter(targetStart);
+    }
+
+    return count;
+}
+
+void CopySearchText(wchar_t* destination, const std::wstring& source)
+{
+    if (!destination)
+        return;
+
+    wcsncpy_s(destination, kSearchTextBufferLength, source.c_str(), _TRUNCATE);
+}
+
+DWORD FindOptionsFromRequest(const OpenEditFindRequest& request, bool searchDown)
+{
+    DWORD options = 0;
+    if (request.matchCase)
+        options |= FR_MATCHCASE;
+    if (request.regex)
+        options |= kFindOptionRegex;
+    if (searchDown)
+        options |= FR_DOWN;
+    return options;
+}
+
+void RememberFindRequest(const OpenEditFindRequest& request, bool searchDown)
+{
+    CopySearchText(g_findText, request.findText);
+    CopySearchText(g_replaceText, request.replaceText);
+    g_lastFindOptions = FindOptionsFromRequest(request, searchDown);
+}
+
+bool FindWindowFind(void*, const OpenEditFindRequest& request, bool previous)
+{
+    const bool searchDown = previous ? request.reverse : !request.reverse;
+    RememberFindRequest(request, searchDown);
+    return FindTextInEditor(g_findText, g_lastFindOptions, searchDown, request.wrap, false);
+}
+
+int FindWindowCount(void*, const OpenEditFindRequest& request)
+{
+    RememberFindRequest(request, true);
+    return CountMatches(g_findText, g_lastFindOptions);
+}
+
+bool FindWindowReplace(void*, const OpenEditFindRequest& request)
+{
+    const bool searchDown = !request.reverse;
+    RememberFindRequest(request, searchDown);
+    const bool replaced = ReplaceCurrentSelection(g_findText, g_replaceText, g_lastFindOptions);
+    if (replaced)
+        FindTextInEditor(g_findText, g_lastFindOptions, searchDown, request.wrap, false);
+    return replaced;
+}
+
+int FindWindowReplaceAll(void*, const OpenEditFindRequest& request)
+{
+    RememberFindRequest(request, true);
+    return ReplaceAllMatches(g_findText, g_replaceText, g_lastFindOptions);
+}
+
+std::wstring GetSelectedTextForFind()
+{
+    if (!g_hSci)
+        return L"";
+
+    const sptr_t byteLength = Sci(SCI_GETSELTEXT, 0, 0);
+    if (byteLength <= 1 || byteLength > kSearchTextBufferLength)
+        return L"";
+
+    std::vector<char> selectedText(static_cast<size_t>(byteLength), '\0');
+    Sci(SCI_GETSELTEXT, 0, reinterpret_cast<sptr_t>(selectedText.data()));
+    return Utf8ToWide(std::string(selectedText.data()));
+}
+
+void OpenFindReplaceDialog(bool replaceDialog)
+{
+    if (!g_findWindow)
+        g_findWindow = std::make_unique<OpenEditFindWindow>(hInst);
+
+    if (g_findText[0] == L'\0')
+    {
+        const std::wstring selectedText = GetSelectedTextForFind();
+        if (!selectedText.empty())
+            CopySearchText(g_findText, selectedText);
+    }
+
+    OpenEditFindWindow::Callbacks callbacks{};
+    callbacks.find = FindWindowFind;
+    callbacks.count = FindWindowCount;
+    callbacks.replace = FindWindowReplace;
+    callbacks.replaceAll = FindWindowReplaceAll;
+
+    g_findWindow->Show(hWnd, replaceDialog, g_findText, g_replaceText,
+        IsDarkTheme(), g_appLanguage == AppLanguage::Chinese, callbacks);
+}
+
+void FindNextCommand(bool searchDown)
+{
+    if (g_findText[0] == L'\0')
+    {
+        OpenFindReplaceDialog(false);
+        return;
+    }
+
+    DWORD options = g_lastFindOptions & (FR_MATCHCASE | FR_WHOLEWORD | kFindOptionRegex);
+    if (searchDown)
+        options |= FR_DOWN;
+    FindTextInEditor(g_findText, options, searchDown, true);
+}
+
+LRESULT HandleFindReplaceMessage(LPARAM lParam)
+{
+    FINDREPLACEW* findReplace = reinterpret_cast<FINDREPLACEW*>(lParam);
+    if (!findReplace)
+        return 0;
+
+    if (findReplace->Flags & FR_DIALOGTERM)
+    {
+        g_hFindReplaceDialog = nullptr;
+        return 0;
+    }
+
+    g_lastFindOptions = findReplace->Flags & kFindOptionMask;
+    const bool searchDown = (findReplace->Flags & FR_DOWN) != 0;
+
+    if (findReplace->Flags & FR_FINDNEXT)
+    {
+        FindTextInEditor(findReplace->lpstrFindWhat, g_lastFindOptions, searchDown, true);
+    }
+    else if (findReplace->Flags & FR_REPLACE)
+    {
+        ReplaceCurrentSelection(findReplace->lpstrFindWhat, findReplace->lpstrReplaceWith, g_lastFindOptions);
+        FindTextInEditor(findReplace->lpstrFindWhat, g_lastFindOptions, searchDown, true);
+    }
+    else if (findReplace->Flags & FR_REPLACEALL)
+    {
+        ReplaceAllMatches(findReplace->lpstrFindWhat, findReplace->lpstrReplaceWith, g_lastFindOptions);
+    }
+
+    return 0;
+}
+
+bool IsEditCommand(int commandId)
+{
+    return commandId >= IDM_EDIT_UNDO && commandId <= IDM_EDIT_SELECT_ALL;
+}
+
+void ExecuteEditCommand(int commandId)
+{
+    switch (commandId)
+    {
+    case IDM_EDIT_UNDO:
+        Sci(SCI_UNDO);
+        break;
+    case IDM_EDIT_REDO:
+        Sci(SCI_REDO);
+        break;
+    case IDM_EDIT_CUT:
+        Sci(SCI_CUT);
+        break;
+    case IDM_EDIT_COPY:
+        Sci(SCI_COPY);
+        break;
+    case IDM_EDIT_PASTE:
+        Sci(SCI_PASTE);
+        break;
+    case IDM_EDIT_DELETE:
+        Sci(SCI_CLEAR);
+        break;
+    case IDM_EDIT_SELECT_ALL:
+        Sci(SCI_SELECTALL);
+        break;
+    default:
+        break;
+    }
+    SetFocus(g_hSci);
+}
+
+void InvalidateTabBar()
+{
+    if (g_hTabBar)
+        InvalidateRect(g_hTabBar, nullptr, TRUE);
+}
+
+void InvalidateStatusBar()
+{
+    if (g_hStatusBar)
+        InvalidateRect(g_hStatusBar, nullptr, TRUE);
+}
+
+bool GetTabModifiedState(int tabIndex)
+{
+    if (tabIndex < 0 || tabIndex >= static_cast<int>(g_tabs.size()))
+        return false;
+
+    return g_tabs[tabIndex].modified || (tabIndex == g_activeTabIndex && !g_loadingTabContent && Sci(SCI_GETMODIFY));
+}
+
+void SetActiveTabModified(bool modified)
+{
+    if (!IsActiveTabValid())
+        return;
+
+    DocumentTab& tab = g_tabs[g_activeTabIndex];
+    if (tab.modified == modified)
+        return;
+
+    tab.modified = modified;
+    InvalidateTabBar();
+    InvalidateStatusBar();
+}
+
+std::wstring GetTabDisplayTitle(const DocumentTab& tab)
+{
+    if (!tab.title.empty())
+        return tab.title;
+    if (!tab.path.empty())
+        return FileNameFromPath(tab.path);
+    return L"Untitled";
+}
+
+std::wstring GetTabTooltipText(int tabIndex)
+{
+    if (tabIndex < 0 || tabIndex >= static_cast<int>(g_tabs.size()))
+        return L"";
+
+    const DocumentTab& tab = g_tabs[tabIndex];
+    return tab.path.empty() ? GetTabDisplayTitle(tab) : FileNameFromPath(tab.path);
+}
+
+void CaptureActiveTab()
+{
+    if (!IsActiveTabValid() || g_loadingTabContent)
+        return;
+
+    DocumentTab& tab = g_tabs[g_activeTabIndex];
+    tab.text = GetEditorText();
+    tab.languageCommand = g_currentLanguageCommand;
+    tab.eolMode = static_cast<int>(Sci(SCI_GETEOLMODE));
+    tab.modified = tab.text != tab.savedText;
+}
+
+DocumentTab CreateUntitledTab()
+{
+    DocumentTab tab;
+    tab.title = L"Untitled " + std::to_wstring(g_nextUntitledIndex++);
+    tab.languageCommand = IDM_LANG_TEXT;
+    tab.encoding = DocumentEncoding::Utf8;
+    tab.eolMode = SC_EOL_CRLF;
+    tab.modified = false;
+    tab.untitled = true;
+    return tab;
+}
+
+DocumentTab CreateDefaultUntitledTab()
+{
+    DocumentTab tab;
+    tab.title = L"Untitled";
+    tab.languageCommand = IDM_LANG_TEXT;
+    tab.encoding = DocumentEncoding::Utf8;
+    tab.eolMode = SC_EOL_CRLF;
+    tab.modified = false;
+    tab.untitled = true;
+    return tab;
+}
+
+void UpdateWindowTitle()
+{
+    std::wstring title = L"openedit";
+    if (IsActiveTabValid())
+    {
+        title = GetTabDisplayTitle(g_tabs[g_activeTabIndex]) + L" - openedit";
+    }
+    else if (!g_currentFilePath.empty())
+    {
+        title = FileNameFromPath(g_currentFilePath) + L" - openedit";
+    }
+    else if (!g_currentFolderPath.empty())
+    {
+        title = FileNameFromPath(g_currentFolderPath) + L" - openedit";
+    }
+    SetWindowTextW(hWnd, title.c_str());
+}
+
+void LoadTabIntoEditor(int tabIndex)
+{
+    if (tabIndex < 0 || tabIndex >= static_cast<int>(g_tabs.size()))
+        return;
+
+    g_loadingTabContent = true;
+    DocumentTab& tab = g_tabs[tabIndex];
+    g_activeTabIndex = tabIndex;
+    g_currentFilePath = tab.path;
+
+    {
+        ScopedRedrawPause redrawPause(g_hSci);
+        ClearWordHighlights();
+        Sci(SCI_SETEOLMODE, tab.eolMode, 0);
+        SetEditorText(tab.text);
+        ApplyLanguage(tab.languageCommand);
+        Sci(SCI_EMPTYUNDOBUFFER);
+        Sci(SCI_SETSAVEPOINT);
+    }
+
+    g_loadingTabContent = false;
+
+    UpdateWindowTitle();
+    InvalidateTabBar();
+    InvalidateStatusBar();
+    SetFocus(g_hSci);
+}
+
+void SwitchToTab(int tabIndex)
+{
+    if (tabIndex == g_activeTabIndex || tabIndex < 0 || tabIndex >= static_cast<int>(g_tabs.size()))
+        return;
+
+    CaptureActiveTab();
+    LoadTabIntoEditor(tabIndex);
+}
+
+int FindOpenTabByPath(const std::wstring& path)
+{
+    for (int index = 0; index < static_cast<int>(g_tabs.size()); ++index)
+    {
+        if (!g_tabs[index].path.empty() &&
+            CompareStringOrdinal(g_tabs[index].path.c_str(), -1, path.c_str(), -1, TRUE) == CSTR_EQUAL)
+            return index;
+    }
+    return -1;
+}
+
+int AddDocumentTab(DocumentTab tab)
+{
+    CaptureActiveTab();
+    g_tabs.push_back(std::move(tab));
+    const int newIndex = static_cast<int>(g_tabs.size()) - 1;
+    LoadTabIntoEditor(newIndex);
+    return newIndex;
+}
+
+bool IsSingleEmptyUntitledTab()
+{
+    CaptureActiveTab();
+    if (g_tabs.size() != 1)
+        return false;
+
+    const DocumentTab& tab = g_tabs[0];
+    return tab.untitled &&
+        tab.path.empty() &&
+        tab.text.empty() &&
+        tab.savedText.empty() &&
+        !tab.modified;
+}
+
+bool HasFileTabs()
+{
+    for (const DocumentTab& tab : g_tabs)
+    {
+        if (!tab.untitled && !tab.path.empty())
+            return true;
+    }
+    return false;
+}
+
+bool IsEmptyUntitledTab(const DocumentTab& tab)
+{
+    return tab.untitled &&
+        tab.path.empty() &&
+        tab.text.empty() &&
+        tab.savedText.empty() &&
+        !tab.modified;
+}
+
+void RemoveEmptyUntitledTabs()
+{
+    CaptureActiveTab();
+    for (int index = static_cast<int>(g_tabs.size()) - 1; index >= 0; --index)
+    {
+        if (g_tabs.size() <= 1)
+            break;
+
+        if (!IsEmptyUntitledTab(g_tabs[index]))
+            continue;
+
+        g_tabs.erase(g_tabs.begin() + index);
+        if (index < g_activeTabIndex)
+            --g_activeTabIndex;
+        else if (index == g_activeTabIndex)
+            g_activeTabIndex = -1;
+    }
+
+    if (g_activeTabIndex < 0 && !g_tabs.empty())
+        LoadTabIntoEditor((std::min)(static_cast<int>(g_tabs.size()) - 1, 0));
+    else
+    {
+        UpdateWindowTitle();
+        InvalidateTabBar();
+        InvalidateStatusBar();
+    }
+}
+
+int AddDocumentTabReplacingDefaultBlank(DocumentTab tab)
+{
+    if (IsSingleEmptyUntitledTab())
+    {
+        g_tabs[0] = std::move(tab);
+        g_activeTabIndex = -1;
+        LoadTabIntoEditor(0);
+        return 0;
+    }
+
+    return AddDocumentTab(std::move(tab));
+}
+
+int ClampFolderPaneWidth(int requestedWidth, int clientWidth)
+{
+    const int dynamicMaxWidth = (std::max)(kFolderPaneMinWidth, clientWidth - kEditorMinWidth - kFolderPaneDividerWidth);
+    const int maxWidth = (std::min)(kFolderPaneMaxWidth, dynamicMaxWidth);
+    return (std::min)((std::max)(requestedWidth, kFolderPaneMinWidth), maxWidth);
+}
+
+int GetEffectiveFolderPaneWidth()
+{
+    if (!g_folderPaneVisible)
+        return 0;
+
+    RECT clientRect{};
+    GetClientRect(hWnd, &clientRect);
+    return ClampFolderPaneWidth(g_folderPaneWidth, clientRect.right - clientRect.left);
+}
+
+RECT GetFolderSplitterRect()
+{
+    RECT clientRect{};
+    GetClientRect(hWnd, &clientRect);
+
+    const int paneWidth = GetEffectiveFolderPaneWidth();
+    if (!g_folderPaneVisible || paneWidth <= 0)
+        return RECT{ 0, 0, 0, 0 };
+
+    const int clientHeight = static_cast<int>(clientRect.bottom - clientRect.top);
+    const int bottom = (std::max)(0, clientHeight - kStatusBarHeight);
+    return RECT{ paneWidth, 0, paneWidth + kFolderPaneDividerWidth, bottom };
+}
+
+bool IsPointOnFolderSplitter(POINT point)
+{
+    RECT splitterRect = GetFolderSplitterRect();
+    return !IsRectEmpty(&splitterRect) && PtInRect(&splitterRect, point);
+}
+
+HWND EnsureFolderSplitterPreviewWindow()
+{
+    if (g_hFolderSplitterPreview && IsWindow(g_hFolderSplitterPreview))
+        return g_hFolderSplitterPreview;
+
+    const DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+    g_hFolderSplitterPreview = CreateWindowExW(exStyle, kFolderSplitterPreviewClassName, L"",
+        WS_POPUP, 0, 0, kFolderSplitterPreviewWindowWidth, 1,
+        hWnd, nullptr, hInst, nullptr);
+
+    if (g_hFolderSplitterPreview)
+        SetLayeredWindowAttributes(g_hFolderSplitterPreview, kFolderSplitterPreviewBackColor, 0, LWA_COLORKEY);
+
+    return g_hFolderSplitterPreview;
+}
+
+void ShowFolderSplitterPreview(int paneWidth)
+{
+    if (!hWnd || paneWidth < 0)
+        return;
+
+    HWND previewWindow = EnsureFolderSplitterPreviewWindow();
+    if (!previewWindow)
+        return;
+
+    RECT clientRect{};
+    GetClientRect(hWnd, &clientRect);
+    const int clientHeight = static_cast<int>(clientRect.bottom - clientRect.top);
+    const int previewHeight = (std::max)(0, clientHeight - kStatusBarHeight);
+    if (previewHeight <= 0)
+    {
+        ShowWindow(previewWindow, SW_HIDE);
+        return;
+    }
+
+    const int x = paneWidth + (kFolderPaneDividerWidth / 2);
+    POINT previewOrigin{ x - (kFolderSplitterPreviewWindowWidth / 2), 0 };
+    ClientToScreen(hWnd, &previewOrigin);
+
+    SetWindowPos(previewWindow, HWND_TOP, previewOrigin.x, previewOrigin.y,
+        kFolderSplitterPreviewWindowWidth, previewHeight,
+        SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+    InvalidateRect(previewWindow, nullptr, TRUE);
+    UpdateWindow(previewWindow);
+}
+
+void HideFolderSplitterPreview()
+{
+    if (g_folderSplitterPreviewWidth >= 0)
+    {
+        g_folderSplitterPreviewWidth = -1;
+    }
+
+    if (g_hFolderSplitterPreview && IsWindow(g_hFolderSplitterPreview))
+        ShowWindow(g_hFolderSplitterPreview, SW_HIDE);
+}
+
+void UpdateFolderSplitterPreview(int paneWidth)
+{
+    if (paneWidth == g_folderSplitterPreviewWidth)
+        return;
+
+    g_folderSplitterPreviewWidth = paneWidth;
+    ShowFolderSplitterPreview(g_folderSplitterPreviewWidth);
+}
+
+void DrawFolderSplitter(HDC hdc)
+{
+    RECT splitterRect = GetFolderSplitterRect();
+    if (IsRectEmpty(&splitterRect))
+        return;
+
+    HBRUSH background = CreateSolidBrush(ThemeFolderPaneBack());
+    FillRect(hdc, &splitterRect, background);
+    DeleteObject(background);
+
+    const int centerX = splitterRect.left + (kFolderPaneDividerWidth / 2);
+    HPEN linePen = CreatePen(PS_SOLID, 1, ThemeFolderPaneLine());
+    HGDIOBJ oldPen = SelectObject(hdc, linePen);
+    MoveToEx(hdc, centerX, splitterRect.top, nullptr);
+    LineTo(hdc, centerX, splitterRect.bottom);
+    SelectObject(hdc, oldPen);
+    DeleteObject(linePen);
+}
+
+void FillMainClientBackground(HDC hdc)
+{
+    if (!hdc || !hWnd)
+        return;
+
+    RECT clientRect{};
+    GetClientRect(hWnd, &clientRect);
+
+    const int clientHeight = clientRect.bottom - clientRect.top;
+    const int contentBottom = (std::max)(0, clientHeight - kStatusBarHeight);
+    const int paneWidth = GetEffectiveFolderPaneWidth();
+    const int editorX = paneWidth > 0 ? paneWidth + kFolderPaneDividerWidth : 0;
+
+    if (paneWidth > 0)
+    {
+        RECT folderRect{ 0, 0, paneWidth, contentBottom };
+        HBRUSH folderBrush = CreateSolidBrush(ThemeFolderPaneBack());
+        FillRect(hdc, &folderRect, folderBrush);
+        DeleteObject(folderBrush);
+    }
+
+    if (editorX < clientRect.right)
+    {
+        RECT editorRect{ editorX, 0, clientRect.right, contentBottom };
+        HBRUSH editorBrush = CreateSolidBrush(ThemeEditorBack());
+        FillRect(hdc, &editorRect, editorBrush);
+        DeleteObject(editorBrush);
+    }
+
+    if (contentBottom < clientRect.bottom)
+    {
+        RECT statusRect{ 0, contentBottom, clientRect.right, clientRect.bottom };
+        HBRUSH statusBrush = CreateSolidBrush(ThemeStatusBack());
+        FillRect(hdc, &statusRect, statusBrush);
+        DeleteObject(statusBrush);
+    }
+
+    DrawFolderSplitter(hdc);
+}
+
+void LayoutChildWindows()
+{
+    RECT clientRect{};
+    GetClientRect(hWnd, &clientRect);
+
+    const int width = clientRect.right - clientRect.left;
+    const int height = clientRect.bottom - clientRect.top;
+    const int contentHeight = (std::max)(0, height - kStatusBarHeight);
+    const int paneWidth = GetEffectiveFolderPaneWidth();
+    const int editorX = paneWidth > 0 ? paneWidth + kFolderPaneDividerWidth : 0;
+    const int editorWidth = (std::max)(0, width - editorX);
+
+    if (g_hFolderTree)
+    {
+        ShowWindow(g_hFolderTree, g_folderPaneVisible ? SW_SHOW : SW_HIDE);
+        MoveWindow(g_hFolderTree, 0, 0, paneWidth, contentHeight, TRUE);
+    }
+
+    if (g_hTabBar)
+    {
+        MoveWindow(g_hTabBar, editorX, 0, editorWidth, kTabBarHeight, TRUE);
+    }
+
+    if (g_hSci)
+    {
+        MoveWindow(g_hSci, editorX, kTabBarHeight, editorWidth, (std::max)(0, contentHeight - kTabBarHeight), TRUE);
+    }
+
+    if (g_hStatusBar)
+    {
+        MoveWindow(g_hStatusBar, 0, contentHeight, width, kStatusBarHeight, TRUE);
+    }
+
+    InvalidateRect(hWnd, nullptr, TRUE);
+}
+
+RECT GetFolderToggleButtonRect(HWND owner)
+{
+    RECT windowRect{};
+    GetWindowRect(owner, &windowRect);
+
+    const int frameX = GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+    const int frameY = GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+    const int buttonWidth = GetSystemMetrics(SM_CXSIZE);
+    const int buttonHeight = GetSystemMetrics(SM_CYSIZE);
+    const int right = windowRect.right - frameX - (buttonWidth * 3);
+
+    return RECT{ right - buttonWidth, windowRect.top + frameY, right, windowRect.top + frameY + buttonHeight };
+}
+
+void RedrawFolderToggleButton()
+{
+    RedrawWindow(hWnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW);
+}
+
+void DrawFolderToggleButton(HWND owner)
+{
+    if (IsIconic(owner))
+        return;
+
+    RECT buttonRect = GetFolderToggleButtonRect(owner);
+    RECT windowRect{};
+    GetWindowRect(owner, &windowRect);
+    OffsetRect(&buttonRect, -windowRect.left, -windowRect.top);
+
+    HDC hdc = GetWindowDC(owner);
+    if (!hdc)
+        return;
+
+    HBRUSH background = CreateSolidBrush(GetSysColor(COLOR_3DFACE));
+    FillRect(hdc, &buttonRect, background);
+    DeleteObject(background);
+    FrameRect(hdc, &buttonRect, GetSysColorBrush(COLOR_3DSHADOW));
+
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, GetSysColor(COLOR_BTNTEXT));
+    DrawTextW(hdc, g_folderPaneVisible ? L"<<" : L">>", -1, &buttonRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    ReleaseDC(owner, hdc);
+}
+
+void SetFolderPaneVisible(bool visible)
+{
+    g_folderPaneVisible = visible;
+    LayoutChildWindows();
+    RedrawFolderToggleButton();
+    UpdateViewMenuCheck();
+}
+
+void ToggleFolderPane()
+{
+    SetFolderPaneVisible(!g_folderPaneVisible);
+}
+
+void ClearFolderPane()
+{
+    g_currentFolderPath.clear();
+    g_folderItems.clear();
+    g_restoreFolderInSession = false;
+    if (g_hFolderTree)
+        TreeView_DeleteAllItems(g_hFolderTree);
+    SetFolderPaneVisible(false);
+    UpdateWindowTitle();
+}
+
+void ShowErrorMessage(const wchar_t* message)
+{
+    MessageBoxW(hWnd, message, L"openedit", MB_OK | MB_ICONERROR);
+}
+
+std::wstring JoinPath(const std::wstring& directory, const std::wstring& fileName)
+{
+    if (directory.empty())
+        return fileName;
+
+    const wchar_t last = directory.back();
+    if (last == L'\\' || last == L'/')
+        return directory + fileName;
+    return directory + L"\\" + fileName;
+}
+
+std::wstring GetEnvironmentDirectory(const wchar_t* variableName)
+{
+    DWORD required = GetEnvironmentVariableW(variableName, nullptr, 0);
+    if (required == 0)
+        return L"";
+
+    std::wstring value(required, L'\0');
+    DWORD written = GetEnvironmentVariableW(variableName, value.data(), required);
+    if (written == 0 || written >= required)
+        return L"";
+
+    value.resize(written);
+    return value;
+}
+
+std::wstring GetAppStateDirectory()
+{
+    std::wstring base = GetEnvironmentDirectory(L"LOCALAPPDATA");
+    if (base.empty())
+        base = GetEnvironmentDirectory(L"TEMP");
+    if (base.empty())
+        return L".";
+
+    const std::wstring directory = JoinPath(base, L"openedit");
+    CreateDirectoryW(directory.c_str(), nullptr);
+    return directory;
+}
+
+std::wstring GetSessionFilePath()
+{
+    return JoinPath(GetAppStateDirectory(), L"session.txt");
+}
+
+std::wstring GetSettingsFilePath()
+{
+    return JoinPath(GetAppStateDirectory(), L"settings.txt");
+}
+
+std::wstring GetSessionTempDirectory()
+{
+    wchar_t tempPath[MAX_PATH]{};
+    DWORD length = GetTempPathW(MAX_PATH, tempPath);
+    std::wstring base = (length > 0 && length < MAX_PATH) ? std::wstring(tempPath, length) : GetEnvironmentDirectory(L"TEMP");
+    if (base.empty())
+        base = L".";
+
+    const std::wstring directory = JoinPath(base, L"openedit");
+    CreateDirectoryW(directory.c_str(), nullptr);
+    return directory;
+}
+
+std::wstring CreateSessionTempFilePath()
+{
+    GUID guid{};
+    wchar_t guidText[40]{};
+    if (SUCCEEDED(CoCreateGuid(&guid)) && StringFromGUID2(guid, guidText, static_cast<int>(sizeof(guidText) / sizeof(guidText[0]))) > 0)
+        return JoinPath(GetSessionTempDirectory(), std::wstring(L"untitled-") + guidText + L".tmp");
+
+    return JoinPath(GetSessionTempDirectory(), L"untitled-" + std::to_wstring(GetTickCount64()) + L".tmp");
+}
+
+bool WriteBytesToFilePath(const std::wstring& path, const std::vector<char>& bytes, bool showErrors)
+{
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        if (showErrors)
+            ShowErrorMessage(L"无法写入文件。");
+        return false;
+    }
+
+    const char* cursor = bytes.data();
+    size_t remaining = bytes.size();
+    bool ok = true;
+    while (remaining > 0)
+    {
+        const DWORD chunk = static_cast<DWORD>((std::min)(remaining, static_cast<size_t>((std::numeric_limits<DWORD>::max)())));
+        DWORD written = 0;
+        if (!WriteFile(file, cursor, chunk, &written, nullptr) || written != chunk)
+        {
+            ok = false;
+            break;
+        }
+        cursor += written;
+        remaining -= written;
+    }
+
+    CloseHandle(file);
+    if (!ok && showErrors)
+        ShowErrorMessage(L"保存文件时发生错误。");
+    return ok;
+}
+
+bool ReadBytesFromFilePath(const std::wstring& path, std::vector<char>& content, bool showErrors)
+{
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        if (showErrors)
+            ShowErrorMessage(L"无法打开文件。");
+        return false;
+    }
+
+    LARGE_INTEGER fileSize{};
+    if (!GetFileSizeEx(file, &fileSize) || fileSize.QuadPart > static_cast<LONGLONG>((std::numeric_limits<DWORD>::max)()))
+    {
+        CloseHandle(file);
+        if (showErrors)
+            ShowErrorMessage(L"文件太大，无法打开。");
+        return false;
+    }
+
+    content.assign(static_cast<size_t>(fileSize.QuadPart) + 1, '\0');
+    DWORD bytesRead = 0;
+    const BOOL readOk = ReadFile(file, content.data(), static_cast<DWORD>(fileSize.QuadPart), &bytesRead, nullptr);
+    CloseHandle(file);
+
+    if (!readOk)
+    {
+        if (showErrors)
+            ShowErrorMessage(L"读取文件时发生错误。");
+        return false;
+    }
+
+    content[bytesRead] = '\0';
+    content.resize(static_cast<size_t>(bytesRead) + 1);
+    return true;
+}
+
+bool DirectoryExists(const std::wstring& path)
+{
+    if (path.empty())
+        return false;
+
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+bool WriteDocumentTextToFile(const std::wstring& path, const std::string& utf8Text, DocumentEncoding encoding, bool showErrors)
+{
+    const std::vector<char> encodedText = EncodeUtf8ForFile(utf8Text, encoding);
+    return WriteBytesToFilePath(path, encodedText, showErrors);
+}
+
+bool ReadDocumentTextFromFile(const std::wstring& path, std::string& utf8Text, DocumentEncoding& encoding, bool showErrors)
+{
+    std::vector<char> content;
+    if (!ReadBytesFromFilePath(path, content, showErrors))
+        return false;
+
+    const size_t byteCount = content.empty() ? 0 : content.size() - 1;
+    utf8Text = DecodeFileBytesToUtf8(content, byteCount, encoding);
+    return true;
+}
+
+bool SaveFileFromEditor(const std::wstring& path)
+{
+    const sptr_t length = Sci(SCI_GETLENGTH);
+    if (length < 0 || static_cast<unsigned long long>(length) > (std::numeric_limits<size_t>::max)() - 1)
+    {
+        ShowErrorMessage(L"文件太大，无法保存。");
+        return false;
+    }
+
+    std::vector<char> text(static_cast<size_t>(length) + 1);
+    Sci(SCI_GETTEXT, static_cast<uptr_t>(text.size()), reinterpret_cast<sptr_t>(text.data()));
+    const std::string utf8Text(text.data(), static_cast<size_t>(length));
+    const DocumentEncoding encoding = IsActiveTabValid() ? g_tabs[g_activeTabIndex].encoding : DocumentEncoding::Utf8;
+
+    if (!WriteDocumentTextToFile(path, utf8Text, encoding, true))
+        return false;
+
+    Sci(SCI_SETSAVEPOINT);
+    return true;
+}
+
+std::wstring PickSaveFilePath(HWND owner)
+{
+    wchar_t fileName[MAX_PATH] = L"";
+    static const wchar_t filter[] =
+        L"Text Files (*.txt)\0*.txt\0"
+        L"Code Files\0*.cpp;*.h;*.cs;*.java;*.js;*.ts;*.py;*.html;*.css;*.json;*.sql;*.md\0"
+        L"All Files (*.*)\0*.*\0\0";
+
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"txt";
+    ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+
+    return GetSaveFileNameW(&ofn) ? std::wstring(fileName) : std::wstring();
+}
+
+bool SaveCurrentFileAs()
+{
+    std::wstring path = PickSaveFilePath(hWnd);
+    if (path.empty())
+        return false;
+
+    if (!SaveFileFromEditor(path))
+        return false;
+
+    g_currentFilePath = path;
+    ApplyLanguage(DetectLanguageFromPath(path));
+    if (IsActiveTabValid())
+    {
+        DocumentTab& tab = g_tabs[g_activeTabIndex];
+        tab.path = path;
+        tab.title = FileNameFromPath(path);
+        tab.text = GetEditorText();
+        tab.savedText = tab.text;
+        tab.languageCommand = g_currentLanguageCommand;
+        tab.eolMode = static_cast<int>(Sci(SCI_GETEOLMODE));
+        tab.modified = false;
+        tab.untitled = false;
+        InvalidateTabBar();
+        InvalidateStatusBar();
+    }
+    UpdateWindowTitle();
+    return true;
+}
+
+bool SaveCurrentFile()
+{
+    if (g_currentFilePath.empty())
+        return SaveCurrentFileAs();
+
+    if (!SaveFileFromEditor(g_currentFilePath))
+        return false;
+
+    if (IsActiveTabValid())
+    {
+        DocumentTab& tab = g_tabs[g_activeTabIndex];
+        tab.path = g_currentFilePath;
+        tab.title = FileNameFromPath(g_currentFilePath);
+        tab.text = GetEditorText();
+        tab.savedText = tab.text;
+        tab.languageCommand = g_currentLanguageCommand;
+        tab.eolMode = static_cast<int>(Sci(SCI_GETEOLMODE));
+        tab.modified = false;
+        tab.untitled = false;
+        InvalidateTabBar();
+        InvalidateStatusBar();
+    }
+    UpdateWindowTitle();
+    return true;
+}
+
+bool PromptSaveIfModified()
+{
+    CaptureActiveTab();
+    if (!(IsActiveTabValid() ? g_tabs[g_activeTabIndex].modified : Sci(SCI_GETMODIFY)))
+        return true;
+
+    std::wstring message = L"当前文件有未保存的修改。是否保存？";
+    if (IsActiveTabValid())
+        message = GetTabDisplayTitle(g_tabs[g_activeTabIndex]) + L" 有未保存的修改。是否保存？";
+
+    const int result = MessageBoxW(
+        hWnd,
+        message.c_str(),
+        L"openedit",
+        MB_YESNOCANCEL | MB_ICONWARNING);
+
+    if (result == IDYES)
+        return SaveCurrentFile();
+    if (result == IDNO)
+        return true;
+    return false;
+}
+
+void CloseTab(int tabIndex)
+{
+    if (tabIndex < 0 || tabIndex >= static_cast<int>(g_tabs.size()))
+        return;
+
+    if (tabIndex != g_activeTabIndex && g_tabs[tabIndex].modified)
+        SwitchToTab(tabIndex);
+
+    if (tabIndex == g_activeTabIndex && !PromptSaveIfModified())
+        return;
+
+    const int closingIndex = tabIndex;
+    const bool closingActiveTab = closingIndex == g_activeTabIndex;
+    g_tabs.erase(g_tabs.begin() + closingIndex);
+
+    if (g_tabs.empty())
+    {
+        g_activeTabIndex = -1;
+        AddDocumentTab(CreateDefaultUntitledTab());
+        return;
+    }
+
+    if (closingActiveTab)
+    {
+        const int nextIndex = (std::min)(closingIndex, static_cast<int>(g_tabs.size()) - 1);
+        g_activeTabIndex = -1;
+        LoadTabIntoEditor(nextIndex);
+    }
+    else
+    {
+        if (closingIndex < g_activeTabIndex)
+            --g_activeTabIndex;
+        InvalidateTabBar();
+    }
+}
+
+bool PromptSaveAllTabs()
+{
+    CaptureActiveTab();
+    for (int index = 0; index < static_cast<int>(g_tabs.size()); ++index)
+    {
+        if (g_tabs[index].untitled)
+            continue;
+
+        if (!g_tabs[index].modified)
+            continue;
+
+        SwitchToTab(index);
+        if (!PromptSaveIfModified())
+            return false;
+    }
+    return true;
+}
+
+void NewFile()
+{
+    AddDocumentTab(CreateUntitledTab());
+}
+
+bool LoadDocumentTabFromFile(const std::wstring& path, DocumentTab& tab, bool showErrors)
+{
+    std::string decodedText;
+    DocumentEncoding encoding = DocumentEncoding::Utf8;
+    if (!ReadDocumentTextFromFile(path, decodedText, encoding, showErrors))
+        return false;
+
+    tab.title = FileNameFromPath(path);
+    tab.path = path;
+    tab.sessionTempPath.clear();
+    tab.text = decodedText;
+    tab.savedText = tab.text;
+    tab.languageCommand = DetectLanguageFromPath(path);
+    tab.encoding = encoding;
+    tab.eolMode = DetectEolModeFromText(tab.text);
+    tab.modified = false;
+    tab.untitled = false;
+    return true;
+}
+
+bool LoadFileIntoEditor(const std::wstring& path)
+{
+    const int existingTab = FindOpenTabByPath(path);
+    if (existingTab >= 0)
+    {
+        SwitchToTab(existingTab);
+        if (HasFileTabs())
+            RemoveEmptyUntitledTabs();
+        return true;
+    }
+
+    DocumentTab tab;
+    if (!LoadDocumentTabFromFile(path, tab, true))
+        return false;
+
+    AddDocumentTabReplacingDefaultBlank(std::move(tab));
+    if (HasFileTabs())
+        RemoveEmptyUntitledTabs();
+    return true;
+}
+
+std::wstring PickOpenFilePath(HWND owner)
+{
+    wchar_t fileName[MAX_PATH] = L"";
+    static const wchar_t filter[] =
+        L"All Supported Files\0*.txt;*.cpp;*.h;*.cs;*.java;*.js;*.ts;*.py;*.html;*.css;*.json;*.sql;*.md;*.xml;*.sh;*.ps1;*.rs;*.lua;*.rb\0"
+        L"All Files (*.*)\0*.*\0\0";
+
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+    return GetOpenFileNameW(&ofn) ? std::wstring(fileName) : std::wstring();
+}
+
+void OpenFileCommand()
+{
+    const std::wstring path = PickOpenFilePath(hWnd);
+    if (path.empty())
+        return;
+
+    if (LoadFileIntoEditor(path))
+        g_restoreFolderInSession = false;
+}
+
+int ParseSessionInt(const std::string& text, int fallback)
+{
+    if (text.empty())
+        return fallback;
+
+    int sign = 1;
+    size_t index = 0;
+    if (text[0] == '-')
+    {
+        sign = -1;
+        index = 1;
+    }
+
+    int value = 0;
+    for (; index < text.size(); ++index)
+    {
+        if (text[index] < '0' || text[index] > '9')
+            return fallback;
+        value = (value * 10) + (text[index] - '0');
+    }
+    return value * sign;
+}
+
+char HexDigit(unsigned char value)
+{
+    return value < 10 ? static_cast<char>('0' + value) : static_cast<char>('A' + (value - 10));
+}
+
+int HexValue(char ch)
+{
+    if (ch >= '0' && ch <= '9')
+        return ch - '0';
+    if (ch >= 'A' && ch <= 'F')
+        return 10 + (ch - 'A');
+    if (ch >= 'a' && ch <= 'f')
+        return 10 + (ch - 'a');
+    return -1;
+}
+
+std::string EncodeSessionField(const std::string& text)
+{
+    std::string encoded;
+    encoded.reserve(text.size());
+    for (unsigned char ch : text)
+    {
+        if (ch == '%' || ch == '\t' || ch == '\r' || ch == '\n')
+        {
+            encoded.push_back('%');
+            encoded.push_back(HexDigit((ch >> 4) & 0x0f));
+            encoded.push_back(HexDigit(ch & 0x0f));
+        }
+        else
+        {
+            encoded.push_back(static_cast<char>(ch));
+        }
+    }
+    return encoded;
+}
+
+std::string DecodeSessionField(const std::string& text)
+{
+    std::string decoded;
+    decoded.reserve(text.size());
+    for (size_t index = 0; index < text.size(); ++index)
+    {
+        if (text[index] == '%' && index + 2 < text.size())
+        {
+            const int high = HexValue(text[index + 1]);
+            const int low = HexValue(text[index + 2]);
+            if (high >= 0 && low >= 0)
+            {
+                decoded.push_back(static_cast<char>((high << 4) | low));
+                index += 2;
+                continue;
+            }
+        }
+        decoded.push_back(text[index]);
+    }
+    return decoded;
+}
+
+std::string EncodeSessionWideField(const std::wstring& text)
+{
+    return EncodeSessionField(WideToUtf8(text));
+}
+
+std::wstring DecodeSessionWideField(const std::string& text)
+{
+    return Utf8ToWide(DecodeSessionField(text));
+}
+
+std::vector<std::string> SplitSessionLine(const std::string& line)
+{
+    std::vector<std::string> fields;
+    size_t start = 0;
+    while (start <= line.size())
+    {
+        const size_t tab = line.find('\t', start);
+        if (tab == std::string::npos)
+        {
+            fields.push_back(line.substr(start));
+            break;
+        }
+        fields.push_back(line.substr(start, tab - start));
+        start = tab + 1;
+    }
+    return fields;
+}
+
+DocumentEncoding SessionEncodingFromInt(int value)
+{
+    switch (value)
+    {
+    case 1:
+        return DocumentEncoding::Utf8Bom;
+    case 2:
+        return DocumentEncoding::Ansi;
+    case 3:
+        return DocumentEncoding::Utf16LE;
+    case 4:
+        return DocumentEncoding::Utf16BE;
+    case 0:
+    default:
+        return DocumentEncoding::Utf8;
+    }
+}
+
+int SessionEncodingToInt(DocumentEncoding encoding)
+{
+    switch (encoding)
+    {
+    case DocumentEncoding::Utf8Bom:
+        return 1;
+    case DocumentEncoding::Ansi:
+        return 2;
+    case DocumentEncoding::Utf16LE:
+        return 3;
+    case DocumentEncoding::Utf16BE:
+        return 4;
+    case DocumentEncoding::Utf8:
+    default:
+        return 0;
+    }
+}
+
+void LoadAppSettings()
+{
+    std::vector<char> content;
+    if (!ReadBytesFromFilePath(GetSettingsFilePath(), content, false))
+        return;
+
+    const std::string settings(content.data(), content.empty() ? 0 : content.size() - 1);
+    size_t start = 0;
+    while (start < settings.size())
+    {
+        size_t end = settings.find('\n', start);
+        if (end == std::string::npos)
+            end = settings.size();
+
+        std::string line = settings.substr(start, end - start);
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        if (line.rfind("restorePreviousFiles=", 0) == 0)
+            g_restorePreviousFilesOnStartup = ParseSessionInt(line.substr(21), 1) != 0;
+
+        start = end + 1;
+    }
+}
+
+void SaveAppSettings()
+{
+    const std::string settings = std::string("restorePreviousFiles=") +
+        (g_restorePreviousFilesOnStartup ? "1\n" : "0\n");
+    std::vector<char> bytes(settings.begin(), settings.end());
+    WriteBytesToFilePath(GetSettingsFilePath(), bytes, false);
+}
+
+bool SaveSessionState()
+{
+    CaptureActiveTab();
+
+    std::string session;
+    session += "version=1\n";
+    session += "active=" + std::to_string(g_activeTabIndex) + "\n";
+    session += "nextUntitled=" + std::to_string(g_nextUntitledIndex) + "\n";
+    if (g_restoreFolderInSession && DirectoryExists(g_currentFolderPath))
+        session += "folder=" + EncodeSessionWideField(g_currentFolderPath) + "\n";
+
+    for (DocumentTab& tab : g_tabs)
+    {
+        if (tab.untitled)
+        {
+            if (tab.sessionTempPath.empty())
+                tab.sessionTempPath = CreateSessionTempFilePath();
+
+            if (!WriteDocumentTextToFile(tab.sessionTempPath, tab.text, DocumentEncoding::Utf8, false))
+                continue;
+
+            session += "tab\tT\t";
+            session += EncodeSessionWideField(GetTabDisplayTitle(tab)) + "\t";
+            session += EncodeSessionWideField(tab.sessionTempPath) + "\t";
+            session += std::to_string(tab.languageCommand) + "\t";
+            session += std::to_string(SessionEncodingToInt(DocumentEncoding::Utf8)) + "\t";
+            session += std::to_string(tab.eolMode) + "\n";
+        }
+        else if (!tab.path.empty())
+        {
+            session += "tab\tF\t";
+            session += EncodeSessionWideField(GetTabDisplayTitle(tab)) + "\t";
+            session += EncodeSessionWideField(tab.path) + "\t";
+            session += std::to_string(tab.languageCommand) + "\t";
+            session += std::to_string(SessionEncodingToInt(tab.encoding)) + "\t";
+            session += std::to_string(tab.eolMode) + "\n";
+        }
+    }
+
+    std::vector<char> bytes(session.begin(), session.end());
+    return WriteBytesToFilePath(GetSessionFilePath(), bytes, false);
+}
+
+bool LoadStartupTabs()
+{
+    if (!g_restorePreviousFilesOnStartup)
+        return false;
+
+    std::vector<char> content;
+    if (!ReadBytesFromFilePath(GetSessionFilePath(), content, false))
+        return false;
+
+    const std::string session(content.data(), content.empty() ? 0 : content.size() - 1);
+    std::vector<DocumentTab> restoredTabs;
+    int activeIndex = 0;
+    int nextUntitledIndex = g_nextUntitledIndex;
+    std::wstring restoredFolderPath;
+
+    size_t start = 0;
+    while (start < session.size())
+    {
+        size_t end = session.find('\n', start);
+        if (end == std::string::npos)
+            end = session.size();
+
+        std::string line = session.substr(start, end - start);
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        if (line.rfind("active=", 0) == 0)
+        {
+            activeIndex = ParseSessionInt(line.substr(7), 0);
+        }
+        else if (line.rfind("nextUntitled=", 0) == 0)
+        {
+            nextUntitledIndex = ParseSessionInt(line.substr(13), nextUntitledIndex);
+        }
+        else if (line.rfind("folder=", 0) == 0)
+        {
+            restoredFolderPath = DecodeSessionWideField(line.substr(7));
+        }
+        else if (line.rfind("tab\t", 0) == 0)
+        {
+            const std::vector<std::string> fields = SplitSessionLine(line);
+            if (fields.size() >= 7)
+            {
+                const bool temporaryTab = fields[1] == "T";
+                const std::wstring title = DecodeSessionWideField(fields[2]);
+                const std::wstring path = DecodeSessionWideField(fields[3]);
+                const int languageCommand = ParseSessionInt(fields[4], IDM_LANG_TEXT);
+                const DocumentEncoding encoding = SessionEncodingFromInt(ParseSessionInt(fields[5], 0));
+                const int eolMode = ParseSessionInt(fields[6], SC_EOL_CRLF);
+
+                DocumentTab tab;
+                if (temporaryTab)
+                {
+                    std::string text;
+                    DocumentEncoding ignoredEncoding = DocumentEncoding::Utf8;
+                    if (!ReadDocumentTextFromFile(path, text, ignoredEncoding, false))
+                    {
+                        start = end + 1;
+                        continue;
+                    }
+
+                    tab.title = title.empty() ? (L"Untitled " + std::to_wstring(nextUntitledIndex++)) : title;
+                    tab.path.clear();
+                    tab.sessionTempPath = path;
+                    tab.text = text;
+                    tab.savedText = tab.text;
+                    tab.languageCommand = languageCommand;
+                    tab.encoding = DocumentEncoding::Utf8;
+                    tab.eolMode = eolMode;
+                    tab.modified = false;
+                    tab.untitled = true;
+                }
+                else
+                {
+                    if (!LoadDocumentTabFromFile(path, tab, false))
+                    {
+                        start = end + 1;
+                        continue;
+                    }
+                    tab.languageCommand = languageCommand;
+                    tab.encoding = encoding;
+                    tab.eolMode = eolMode;
+                    tab.modified = false;
+                    tab.untitled = false;
+                }
+
+                restoredTabs.push_back(std::move(tab));
+            }
+        }
+
+        start = end + 1;
+    }
+
+    if (restoredTabs.empty())
+        return false;
+
+    g_tabs = std::move(restoredTabs);
+    g_activeTabIndex = -1;
+    g_nextUntitledIndex = (std::max)(g_nextUntitledIndex, nextUntitledIndex);
+    activeIndex = (std::min)((std::max)(activeIndex, 0), static_cast<int>(g_tabs.size()) - 1);
+    LoadTabIntoEditor(activeIndex);
+    if (DirectoryExists(restoredFolderPath))
+    {
+        PopulateFolderTree(restoredFolderPath);
+        g_restoreFolderInSession = true;
+    }
+    else
+    {
+        g_currentFolderPath.clear();
+        g_folderItems.clear();
+        g_restoreFolderInSession = false;
+        SetFolderPaneVisible(false);
+    }
+    return true;
+}
+
+std::wstring PickFolderPath(HWND owner)
+{
+    IFileDialog* dialog = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(hr))
+    {
+        ShowErrorMessage(L"无法打开文件夹选择器。");
+        return L"";
+    }
+
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    dialog->SetTitle(L"打开文件夹");
+
+    std::wstring folderPath;
+    if (SUCCEEDED(dialog->Show(owner)))
+    {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&item)))
+        {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)))
+            {
+                folderPath = path;
+                CoTaskMemFree(path);
+            }
+            item->Release();
+        }
+    }
+
+    dialog->Release();
+    return folderPath;
+}
+
+int AddThemedFolderIconToImageList(HIMAGELIST imageList, int iconWidth, int iconHeight, bool open)
+{
+    if (!imageList || iconWidth <= 0 || iconHeight <= 0)
+        return -1;
+
+    HDC screenDc = GetDC(nullptr);
+    if (!screenDc)
+        return -1;
+
+    HDC memoryDc = CreateCompatibleDC(screenDc);
+    HBITMAP bitmap = memoryDc ? CreateCompatibleBitmap(screenDc, iconWidth, iconHeight) : nullptr;
+    ReleaseDC(nullptr, screenDc);
+
+    if (!memoryDc || !bitmap)
+    {
+        if (bitmap)
+            DeleteObject(bitmap);
+        if (memoryDc)
+            DeleteDC(memoryDc);
+        return -1;
+    }
+
+    HGDIOBJ oldBitmap = SelectObject(memoryDc, bitmap);
+
+    RECT fullRect{ 0, 0, iconWidth, iconHeight };
+    HBRUSH maskBrush = CreateSolidBrush(kFolderTreeIconMaskColor);
+    FillRect(memoryDc, &fullRect, maskBrush);
+    DeleteObject(maskBrush);
+
+    const int left = (std::max)(1, iconWidth / 16);
+    const int top = (std::max)(2, iconHeight / 5);
+    const int right = iconWidth - (std::max)(1, iconWidth / 16);
+    const int bottom = iconHeight - (std::max)(2, iconHeight / 8);
+    const int tabWidth = (std::max)(5, iconWidth / 3);
+    const int tabHeight = (std::max)(3, iconHeight / 5);
+    const COLORREF borderColor = IsDarkTheme() ? RGB(216, 172, 83) : RGB(172, 116, 32);
+    const COLORREF tabFillColor = IsDarkTheme() ? RGB(190, 139, 52) : RGB(237, 176, 70);
+    const COLORREF bodyFillColor = IsDarkTheme() ? RGB(205, 153, 65) : RGB(248, 194, 91);
+    const COLORREF openFillColor = IsDarkTheme() ? RGB(224, 171, 77) : RGB(255, 207, 104);
+
+    HBRUSH tabBrush = CreateSolidBrush(tabFillColor);
+    HPEN borderPen = CreatePen(PS_SOLID, 1, borderColor);
+    HGDIOBJ oldBrush = SelectObject(memoryDc, tabBrush);
+    HGDIOBJ oldPen = SelectObject(memoryDc, borderPen);
+
+    POINT tabShape[] = {
+        { left + 1, top },
+        { left + tabWidth, top },
+        { left + tabWidth + 2, top + tabHeight },
+        { right - 1, top + tabHeight },
+        { right - 1, top + tabHeight + 3 },
+        { left + 1, top + tabHeight + 3 },
+        { left + 1, top },
+    };
+    Polygon(memoryDc, tabShape, static_cast<int>(sizeof(tabShape) / sizeof(tabShape[0])));
+
+    HBRUSH bodyBrush = CreateSolidBrush(open ? openFillColor : bodyFillColor);
+    SelectObject(memoryDc, bodyBrush);
+    if (open)
+    {
+        POINT openShape[] = {
+            { left, top + tabHeight + 3 },
+            { right, top + tabHeight + 3 },
+            { right - 2, bottom },
+            { left + 2, bottom },
+            { left, top + tabHeight + 3 },
+        };
+        Polygon(memoryDc, openShape, static_cast<int>(sizeof(openShape) / sizeof(openShape[0])));
+    }
+    else
+    {
+        RoundRect(memoryDc, left, top + tabHeight + 2, right, bottom, 2, 2);
+    }
+
+    SelectObject(memoryDc, oldBrush);
+    SelectObject(memoryDc, oldPen);
+    DeleteObject(bodyBrush);
+    DeleteObject(tabBrush);
+    DeleteObject(borderPen);
+    SelectObject(memoryDc, oldBitmap);
+
+    const int iconIndex = ImageList_AddMasked(imageList, bitmap, kFolderTreeIconMaskColor);
+    DeleteObject(bitmap);
+    DeleteDC(memoryDc);
+    return iconIndex;
+}
+
+int AddThemedFileIconToImageList(HIMAGELIST imageList, int iconWidth, int iconHeight)
+{
+    if (!imageList || iconWidth <= 0 || iconHeight <= 0)
+        return -1;
+
+    HDC screenDc = GetDC(nullptr);
+    if (!screenDc)
+        return -1;
+
+    HDC memoryDc = CreateCompatibleDC(screenDc);
+    HBITMAP bitmap = memoryDc ? CreateCompatibleBitmap(screenDc, iconWidth, iconHeight) : nullptr;
+    ReleaseDC(nullptr, screenDc);
+
+    if (!memoryDc || !bitmap)
+    {
+        if (bitmap)
+            DeleteObject(bitmap);
+        if (memoryDc)
+            DeleteDC(memoryDc);
+        return -1;
+    }
+
+    HGDIOBJ oldBitmap = SelectObject(memoryDc, bitmap);
+
+    RECT fullRect{ 0, 0, iconWidth, iconHeight };
+    HBRUSH maskBrush = CreateSolidBrush(kFolderTreeIconMaskColor);
+    FillRect(memoryDc, &fullRect, maskBrush);
+    DeleteObject(maskBrush);
+
+    const int left = (std::max)(2, iconWidth / 8);
+    const int top = (std::max)(1, iconHeight / 8);
+    const int right = iconWidth - left;
+    const int bottom = iconHeight - top;
+    const int fold = (std::max)(4, iconWidth / 4);
+    const COLORREF lineColor = IsDarkTheme() ? RGB(190, 190, 190) : RGB(82, 92, 104);
+
+    HPEN linePen = CreatePen(PS_SOLID, 1, lineColor);
+    HGDIOBJ oldPen = SelectObject(memoryDc, linePen);
+    HGDIOBJ oldBrush = SelectObject(memoryDc, GetStockObject(NULL_BRUSH));
+
+    POINT outline[] = {
+        { left, top },
+        { right - fold, top },
+        { right, top + fold },
+        { right, bottom },
+        { left, bottom },
+        { left, top },
+    };
+    Polyline(memoryDc, outline, static_cast<int>(sizeof(outline) / sizeof(outline[0])));
+    MoveToEx(memoryDc, right - fold, top, nullptr);
+    LineTo(memoryDc, right - fold, top + fold);
+    LineTo(memoryDc, right, top + fold);
+
+    const int lineLeft = left + 3;
+    const int lineRight = right - 3;
+    const int firstLineY = top + ((bottom - top) / 2);
+    MoveToEx(memoryDc, lineLeft, firstLineY, nullptr);
+    LineTo(memoryDc, lineRight, firstLineY);
+    MoveToEx(memoryDc, lineLeft, (std::min)(bottom - 2, firstLineY + 3), nullptr);
+    LineTo(memoryDc, lineRight, (std::min)(bottom - 2, firstLineY + 3));
+
+    SelectObject(memoryDc, oldBrush);
+    SelectObject(memoryDc, oldPen);
+    DeleteObject(linePen);
+    SelectObject(memoryDc, oldBitmap);
+
+    const int iconIndex = ImageList_AddMasked(imageList, bitmap, kFolderTreeIconMaskColor);
+    DeleteObject(bitmap);
+    DeleteDC(memoryDc);
+    return iconIndex;
+}
+
+void InitializeFolderTreeImageList()
+{
+    if (!g_hFolderTree)
+        return;
+
+    const int iconWidth = GetSystemMetrics(SM_CXSMICON);
+    const int iconHeight = GetSystemMetrics(SM_CYSMICON);
+    HIMAGELIST imageList = ImageList_Create(iconWidth, iconHeight, ILC_COLOR32 | ILC_MASK, 3, 0);
+    if (!imageList)
+        return;
+
+    ImageList_SetBkColor(imageList, CLR_NONE);
+
+    const int folderIconIndex = AddThemedFolderIconToImageList(imageList, iconWidth, iconHeight, false);
+    const int folderOpenIconIndex = AddThemedFolderIconToImageList(imageList, iconWidth, iconHeight, true);
+    const int textFileIconIndex = AddThemedFileIconToImageList(imageList, iconWidth, iconHeight);
+
+    if (folderIconIndex < 0 || folderOpenIconIndex < 0 || textFileIconIndex < 0)
+    {
+        ImageList_Destroy(imageList);
+        return;
+    }
+
+    TreeView_SetImageList(g_hFolderTree, imageList, TVSIL_NORMAL);
+
+    if (g_hFolderTreeImageList)
+        ImageList_Destroy(g_hFolderTreeImageList);
+
+    g_hFolderTreeImageList = imageList;
+    g_folderIconIndex = folderIconIndex;
+    g_folderOpenIconIndex = folderOpenIconIndex;
+    g_textFileIconIndex = textFileIconIndex;
+}
+
+LRESULT HandleFolderTreeCustomDraw(LPARAM lParam)
+{
+    NMTVCUSTOMDRAW* customDraw = reinterpret_cast<NMTVCUSTOMDRAW*>(lParam);
+    switch (customDraw->nmcd.dwDrawStage)
+    {
+    case CDDS_PREPAINT:
+        return CDRF_NOTIFYITEMDRAW;
+
+    case CDDS_ITEMPREPAINT:
+        if (customDraw->nmcd.uItemState & CDIS_SELECTED)
+        {
+            customDraw->clrText = ThemeFolderTreeSelectionText();
+            customDraw->clrTextBk = ThemeFolderTreeSelectionBack();
+        }
+        else
+        {
+            customDraw->clrText = ThemeFolderPaneText();
+            customDraw->clrTextBk = ThemeFolderPaneBack();
+        }
+        return CDRF_DODEFAULT;
+    }
+
+    return CDRF_DODEFAULT;
+}
+
+LRESULT CALLBACK FolderTreeWndProc(HWND treeWindow, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_LBUTTONDBLCLK:
+    {
+        POINT clientPoint{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        HandleFolderTreeItemClickAt(clientPoint, true);
+        return 0;
+    }
+
+    case WM_ERASEBKGND:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        RECT clientRect{};
+        GetClientRect(treeWindow, &clientRect);
+        HBRUSH brush = CreateSolidBrush(ThemeFolderPaneBack());
+        FillRect(hdc, &clientRect, brush);
+        DeleteObject(brush);
+        return 1;
+    }
+
+    case WM_THEMECHANGED:
+        ApplyFolderTreeTheme();
+        InvalidateFolderTree();
+        break;
+    }
+
+    return g_originalFolderTreeProc ?
+        CallWindowProcW(g_originalFolderTreeProc, treeWindow, message, wParam, lParam) :
+        DefWindowProcW(treeWindow, message, wParam, lParam);
+}
+
+std::vector<FolderItem> EnumerateFolderChildren(const std::wstring& folderPath)
+{
+    namespace fs = std::filesystem;
+
+    std::vector<FolderItem> children;
+    std::error_code ec;
+    for (const fs::directory_entry& entry : fs::directory_iterator(fs::path(folderPath), fs::directory_options::skip_permission_denied, ec))
+    {
+        std::error_code itemError;
+        FolderItem item;
+        item.name = entry.path().filename().wstring();
+        item.path = entry.path().wstring();
+        item.isDirectory = entry.is_directory(itemError);
+        if (!itemError)
+            children.push_back(std::move(item));
+    }
+
+    std::sort(children.begin(), children.end(), [](const FolderItem& left, const FolderItem& right) {
+        if (left.isDirectory != right.isDirectory)
+            return left.isDirectory;
+        return CompareStringOrdinal(left.name.c_str(), -1, right.name.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+    });
+
+    return children;
+}
+
+FolderItem* StoreFolderItem(FolderItem item)
+{
+    g_folderItems.push_back(std::make_unique<FolderItem>(std::move(item)));
+    return g_folderItems.back().get();
+}
+
+void DeleteTreeChildren(HTREEITEM parentItem)
+{
+    HTREEITEM child = TreeView_GetChild(g_hFolderTree, parentItem);
+    while (child)
+    {
+        TreeView_DeleteItem(g_hFolderTree, child);
+        child = TreeView_GetChild(g_hFolderTree, parentItem);
+    }
+}
+
+HTREEITEM InsertFolderTreeItem(HTREEITEM parentItem, const FolderItem& source)
+{
+    FolderItem* itemData = StoreFolderItem(source);
+    const int iconIndex = source.isDirectory ? g_folderIconIndex : g_textFileIconIndex;
+    const int selectedIconIndex = source.isDirectory ? g_folderOpenIconIndex : g_textFileIconIndex;
+
+    TVINSERTSTRUCTW insert{};
+    insert.hParent = parentItem;
+    insert.hInsertAfter = TVI_LAST;
+    insert.item.mask = TVIF_TEXT | TVIF_IMAGE | TVIF_SELECTEDIMAGE | TVIF_PARAM | TVIF_CHILDREN;
+    insert.item.pszText = const_cast<LPWSTR>(itemData->name.c_str());
+    insert.item.iImage = iconIndex;
+    insert.item.iSelectedImage = selectedIconIndex;
+    insert.item.lParam = reinterpret_cast<LPARAM>(itemData);
+    insert.item.cChildren = source.isDirectory ? 1 : 0;
+
+    return TreeView_InsertItem(g_hFolderTree, &insert);
+}
+
+void UpdateFolderNodeIcon(HTREEITEM treeItem, bool expanded)
+{
+    TVITEMW item{};
+    item.mask = TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+    item.hItem = treeItem;
+    item.iImage = expanded ? g_folderOpenIconIndex : g_folderIconIndex;
+    item.iSelectedImage = expanded ? g_folderOpenIconIndex : g_folderIconIndex;
+    TreeView_SetItem(g_hFolderTree, &item);
+}
+
+FolderItem* GetFolderItemData(HTREEITEM treeItem)
+{
+    TVITEMW item{};
+    item.mask = TVIF_PARAM;
+    item.hItem = treeItem;
+    if (!TreeView_GetItem(g_hFolderTree, &item))
+        return nullptr;
+    return reinterpret_cast<FolderItem*>(item.lParam);
+}
+
+void LoadFolderNodeChildren(HTREEITEM treeItem, FolderItem* folderItem)
+{
+    if (!folderItem || !folderItem->isDirectory || folderItem->childrenLoaded)
+        return;
+
+    ScopedRedrawPause redrawPause(g_hFolderTree);
+    DeleteTreeChildren(treeItem);
+
+    const std::vector<FolderItem> children = EnumerateFolderChildren(folderItem->path);
+    for (const FolderItem& child : children)
+        InsertFolderTreeItem(treeItem, child);
+
+    folderItem->childrenLoaded = true;
+
+    TVITEMW item{};
+    item.mask = TVIF_CHILDREN;
+    item.hItem = treeItem;
+    item.cChildren = children.empty() ? 0 : 1;
+    TreeView_SetItem(g_hFolderTree, &item);
+}
+
+void PrepareFolderTreeItemForExpand(HTREEITEM treeItem)
+{
+    if (!g_hFolderTree || !treeItem)
+        return;
+
+    FolderItem* folderItem = GetFolderItemData(treeItem);
+    if (!folderItem || !folderItem->isDirectory)
+        return;
+
+    LoadFolderNodeChildren(treeItem, folderItem);
+    if (TreeView_GetChild(g_hFolderTree, treeItem))
+    {
+        TVITEMW item{};
+        item.mask = TVIF_CHILDREN;
+        item.hItem = treeItem;
+        item.cChildren = 1;
+        TreeView_SetItem(g_hFolderTree, &item);
+    }
+}
+
+void ExpandFolderTreeItem(HTREEITEM treeItem)
+{
+    if (!g_hFolderTree || !treeItem)
+        return;
+
+    ScopedRedrawPause redrawPause(g_hFolderTree);
+    PrepareFolderTreeItemForExpand(treeItem);
+    TreeView_Expand(g_hFolderTree, treeItem, TVE_EXPAND);
+}
+
+void ToggleFolderTreeItem(HTREEITEM treeItem)
+{
+    if (!g_hFolderTree || !treeItem)
+        return;
+
+    ScopedRedrawPause redrawPause(g_hFolderTree);
+    const UINT state = TreeView_GetItemState(g_hFolderTree, treeItem, TVIS_EXPANDED);
+    if ((state & TVIS_EXPANDED) == 0)
+        PrepareFolderTreeItemForExpand(treeItem);
+
+    TreeView_Expand(g_hFolderTree, treeItem, (state & TVIS_EXPANDED) ? TVE_COLLAPSE : TVE_EXPAND);
+}
+
+void PopulateFolderTree(const std::wstring& folderPath)
+{
+    if (!g_hFolderTree)
+        return;
+
+    namespace fs = std::filesystem;
+
+    ScopedRedrawPause redrawPause(g_hFolderTree);
+    g_currentFolderPath = folderPath;
+    g_restoreFolderInSession = true;
+    g_folderItems.clear();
+    TreeView_DeleteAllItems(g_hFolderTree);
+
+    FolderItem rootItem;
+    rootItem.path = folderPath;
+    rootItem.name = FileNameFromPath(folderPath);
+    rootItem.isDirectory = true;
+
+    HTREEITEM rootTreeItem = InsertFolderTreeItem(TVI_ROOT, rootItem);
+    LoadFolderNodeChildren(rootTreeItem, GetFolderItemData(rootTreeItem));
+    TreeView_Expand(g_hFolderTree, rootTreeItem, TVE_EXPAND);
+    TreeView_SelectItem(g_hFolderTree, rootTreeItem);
+    UpdateFolderNodeIcon(rootTreeItem, true);
+    InvalidateFolderTree();
+
+    SetFolderPaneVisible(true);
+    UpdateWindowTitle();
+}
+
+void OpenFolderCommand()
+{
+    const std::wstring folderPath = PickFolderPath(hWnd);
+    if (!folderPath.empty())
+        PopulateFolderTree(folderPath);
+}
+
+bool HandleFolderTreeItemClickAt(POINT clientPoint, bool doubleClick)
+{
+    if (!g_hFolderTree)
+        return false;
+
+    TVHITTESTINFO hitTest{};
+    hitTest.pt = clientPoint;
+    HTREEITEM clicked = TreeView_HitTest(g_hFolderTree, &hitTest);
+    if (!clicked)
+        return false;
+
+    if (hitTest.flags & TVHT_ONITEMBUTTON)
+    {
+        if (doubleClick)
+        {
+            ToggleFolderTreeItem(clicked);
+            return true;
+        }
+        return false;
+    }
+
+    if ((hitTest.flags & (TVHT_ONITEMICON | TVHT_ONITEMLABEL)) == 0)
+        return false;
+
+    ScopedRedrawPause redrawPause(g_hFolderTree);
+    TreeView_SelectItem(g_hFolderTree, clicked);
+
+    FolderItem* item = GetFolderItemData(clicked);
+    if (!item)
+        return true;
+
+    if (item->isDirectory)
+    {
+        if (doubleClick)
+            ToggleFolderTreeItem(clicked);
+        return true;
+    }
+
+    if (doubleClick)
+        LoadFileIntoEditor(item->path);
+    return true;
+}
+
+bool HandleFolderTreeSingleClick()
+{
+    DWORD cursorPosition = GetMessagePos();
+    POINT clientPoint{ GET_X_LPARAM(cursorPosition), GET_Y_LPARAM(cursorPosition) };
+    ScreenToClient(g_hFolderTree, &clientPoint);
+    return HandleFolderTreeItemClickAt(clientPoint, false);
+}
+
+HTREEITEM GetFolderTreeSelection()
+{
+    return g_hFolderTree ? TreeView_GetSelection(g_hFolderTree) : nullptr;
+}
+
+void RefreshFolderTreeItem(HTREEITEM treeItem)
+{
+    if (!g_hFolderTree)
+        return;
+
+    if (!treeItem)
+    {
+        if (!g_currentFolderPath.empty())
+            PopulateFolderTree(g_currentFolderPath);
+        return;
+    }
+
+    FolderItem* item = GetFolderItemData(treeItem);
+    if (!item)
+        return;
+
+    if (!item->isDirectory)
+    {
+        HTREEITEM parent = TreeView_GetParent(g_hFolderTree, treeItem);
+        if (parent)
+            RefreshFolderTreeItem(parent);
+        return;
+    }
+
+    ScopedRedrawPause redrawPause(g_hFolderTree);
+    item->childrenLoaded = false;
+    LoadFolderNodeChildren(treeItem, item);
+    TreeView_Expand(g_hFolderTree, treeItem, TVE_EXPAND);
+    TreeView_SelectItem(g_hFolderTree, treeItem);
+    UpdateFolderNodeIcon(treeItem, true);
+    InvalidateFolderTree();
+}
+
+void CopyTextToClipboard(const std::wstring& text)
+{
+    if (text.empty() || !OpenClipboard(hWnd))
+        return;
+
+    EmptyClipboard();
+    const size_t byteCount = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, byteCount);
+    if (memory)
+    {
+        void* data = GlobalLock(memory);
+        if (data)
+        {
+            memcpy(data, text.c_str(), byteCount);
+            GlobalUnlock(memory);
+            if (SetClipboardData(CF_UNICODETEXT, memory))
+                memory = nullptr;
+        }
+    }
+    if (memory)
+        GlobalFree(memory);
+    CloseClipboard();
+}
+
+void CopySelectedFolderItemName()
+{
+    FolderItem* item = GetFolderItemData(GetFolderTreeSelection());
+    if (item)
+        CopyTextToClipboard(item->name);
+}
+
+void OpenSelectedFolderItemInExplorer()
+{
+    FolderItem* item = GetFolderItemData(GetFolderTreeSelection());
+    if (!item)
+        return;
+
+    if (item->isDirectory)
+    {
+        ShellExecuteW(hWnd, L"open", item->path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+
+    const std::wstring parameters = L"/select,\"" + item->path + L"\"";
+    ShellExecuteW(hWnd, L"open", L"explorer.exe", parameters.c_str(), nullptr, SW_SHOWNORMAL);
+}
+
+void ShowFolderTreeContextMenu(POINT screenPoint)
+{
+    if (!g_hFolderTree)
+        return;
+
+    POINT clientPoint = screenPoint;
+    ScreenToClient(g_hFolderTree, &clientPoint);
+
+    TVHITTESTINFO hitTest{};
+    hitTest.pt = clientPoint;
+    HTREEITEM hitItem = TreeView_HitTest(g_hFolderTree, &hitTest);
+    if (hitItem)
+        TreeView_SelectItem(g_hFolderTree, hitItem);
+
+    HTREEITEM selected = GetFolderTreeSelection();
+    if (!selected)
+        return;
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return;
+
+    AppendMenuW(menu, MF_STRING, IDM_FOLDER_REFRESH, UiText(L"\u5237\u65B0\u6587\u4EF6\u5939", L"Refresh Folder"));
+    AppendMenuW(menu, MF_STRING, IDM_FOLDER_COPY_NAME, UiText(L"\u590D\u5236\u6587\u4EF6\u540D", L"Copy Name"));
+    AppendMenuW(menu, MF_STRING, IDM_FOLDER_OPEN_EXPLORER, UiText(L"\u6587\u4EF6\u7BA1\u7406\u5668\u6253\u5F00", L"Open in Explorer"));
+    std::vector<std::unique_ptr<ThemedMenuItem>> menuItems;
+    ApplyPopupMenuTheme(menu, menuItems);
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON, screenPoint.x, screenPoint.y, 0, hWnd, nullptr);
+    DestroyMenu(menu);
+}
+
+DocumentEncoding EncodingFromCommand(int commandId)
+{
+    switch (commandId)
+    {
+    case IDM_ENCODING_UTF8_BOM:
+        return DocumentEncoding::Utf8Bom;
+    case IDM_ENCODING_ANSI:
+        return DocumentEncoding::Ansi;
+    case IDM_ENCODING_UTF16_LE:
+        return DocumentEncoding::Utf16LE;
+    case IDM_ENCODING_UTF16_BE:
+        return DocumentEncoding::Utf16BE;
+    case IDM_ENCODING_UTF8:
+    default:
+        return DocumentEncoding::Utf8;
+    }
+}
+
+int CommandFromEncoding(DocumentEncoding encoding)
+{
+    switch (encoding)
+    {
+    case DocumentEncoding::Utf8Bom:
+        return IDM_ENCODING_UTF8_BOM;
+    case DocumentEncoding::Ansi:
+        return IDM_ENCODING_ANSI;
+    case DocumentEncoding::Utf16LE:
+        return IDM_ENCODING_UTF16_LE;
+    case DocumentEncoding::Utf16BE:
+        return IDM_ENCODING_UTF16_BE;
+    case DocumentEncoding::Utf8:
+    default:
+        return IDM_ENCODING_UTF8;
+    }
+}
+
+int EolModeFromCommand(int commandId)
+{
+    switch (commandId)
+    {
+    case IDM_EOL_UNIX:
+        return SC_EOL_LF;
+    case IDM_EOL_MAC:
+        return SC_EOL_CR;
+    case IDM_EOL_WINDOWS:
+    default:
+        return SC_EOL_CRLF;
+    }
+}
+
+int CommandFromEolMode(int eolMode)
+{
+    switch (eolMode)
+    {
+    case SC_EOL_LF:
+        return IDM_EOL_UNIX;
+    case SC_EOL_CR:
+        return IDM_EOL_MAC;
+    case SC_EOL_CRLF:
+    default:
+        return IDM_EOL_WINDOWS;
+    }
+}
+
+void SetActiveDocumentEncoding(DocumentEncoding encoding)
+{
+    if (!IsActiveTabValid())
+        return;
+
+    g_tabs[g_activeTabIndex].encoding = encoding;
+    InvalidateStatusBar();
+}
+
+void SetActiveDocumentEolMode(int eolMode)
+{
+    if (!g_hSci)
+        return;
+
+    const int oldEolMode = static_cast<int>(Sci(SCI_GETEOLMODE));
+    if (oldEolMode != eolMode)
+    {
+        Sci(SCI_CONVERTEOLS, eolMode, 0);
+        Sci(SCI_SETEOLMODE, eolMode, 0);
+    }
+
+    if (IsActiveTabValid())
+    {
+        DocumentTab& tab = g_tabs[g_activeTabIndex];
+        tab.eolMode = eolMode;
+        tab.text = GetEditorText();
+        tab.modified = tab.text != tab.savedText;
+        InvalidateTabBar();
+    }
+    InvalidateStatusBar();
+}
+
+void SetControlFont(HWND control)
+{
+    if (control)
+        SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+}
+
+HBRUSH GetPopupBackBrush()
+{
+    if (!g_hPopupBackBrush)
+        g_hPopupBackBrush = CreateSolidBrush(ThemePopupBack());
+    return g_hPopupBackBrush;
+}
+
+HBRUSH GetPopupSurfaceBrush()
+{
+    if (!g_hPopupSurfaceBrush)
+        g_hPopupSurfaceBrush = CreateSolidBrush(ThemePopupSurface());
+    return g_hPopupSurfaceBrush;
+}
+
+HBRUSH GetMenuBackBrush()
+{
+    if (!g_hMenuBackBrush)
+        g_hMenuBackBrush = CreateSolidBrush(ThemeMenuBack());
+    return g_hMenuBackBrush;
+}
+
+void InvalidateFolderTree()
+{
+    if (g_hFolderTree)
+        RedrawWindow(g_hFolderTree, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
+}
+
+void DrawRoundedPanel(HDC hdc, const RECT& rect, COLORREF fill, COLORREF border, int radius)
+{
+    HBRUSH brush = CreateSolidBrush(fill);
+    HPEN pen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldBrush = SelectObject(hdc, brush);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
+void DrawOwnerButton(const DRAWITEMSTRUCT* drawItem)
+{
+    if (!drawItem)
+        return;
+
+    const bool pressed = (drawItem->itemState & ODS_SELECTED) != 0;
+    const bool focused = (drawItem->itemState & ODS_FOCUS) != 0;
+    RECT rect = drawItem->rcItem;
+    FillRect(drawItem->hDC, &rect, GetPopupBackBrush());
+    DrawRoundedPanel(drawItem->hDC, rect, ThemePopupButtonBack(pressed), focused ? ThemeAccent() : ThemePopupBorder(), 8);
+
+    wchar_t text[128]{};
+    GetWindowTextW(drawItem->hwndItem, text, static_cast<int>(sizeof(text) / sizeof(text[0])));
+    SetBkMode(drawItem->hDC, TRANSPARENT);
+    SetTextColor(drawItem->hDC, ThemePopupText());
+    DrawTextW(drawItem->hDC, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+}
+
+bool IsSettingsOptionControl(int controlId)
+{
+    switch (controlId)
+    {
+    case IDC_SETTINGS_THEME_LIGHT:
+    case IDC_SETTINGS_THEME_DARK:
+    case IDC_SETTINGS_LANGUAGE_CHINESE:
+    case IDC_SETTINGS_LANGUAGE_ENGLISH:
+    case IDC_SETTINGS_RESTORE_PREVIOUS_FILES:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsSettingsRadioControl(int controlId)
+{
+    switch (controlId)
+    {
+    case IDC_SETTINGS_THEME_LIGHT:
+    case IDC_SETTINGS_THEME_DARK:
+    case IDC_SETTINGS_LANGUAGE_CHINESE:
+    case IDC_SETTINGS_LANGUAGE_ENGLISH:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsSettingsOptionChecked(int controlId)
+{
+    switch (controlId)
+    {
+    case IDC_SETTINGS_THEME_LIGHT:
+        return g_settingsDraftTheme == AppTheme::Light;
+    case IDC_SETTINGS_THEME_DARK:
+        return g_settingsDraftTheme == AppTheme::Dark;
+    case IDC_SETTINGS_LANGUAGE_CHINESE:
+        return g_settingsDraftLanguage == AppLanguage::Chinese;
+    case IDC_SETTINGS_LANGUAGE_ENGLISH:
+        return g_settingsDraftLanguage == AppLanguage::English;
+    case IDC_SETTINGS_RESTORE_PREVIOUS_FILES:
+        return g_settingsDraftRestorePreviousFiles;
+    default:
+        return false;
+    }
+}
+
+void RedrawSettingsOptions(HWND settingsWindow)
+{
+    RedrawWindow(settingsWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+}
+
+void DrawPopupOptionControl(const DRAWITEMSTRUCT* drawItem)
+{
+    if (!drawItem)
+        return;
+
+    const int controlId = GetDlgCtrlID(drawItem->hwndItem);
+    const bool radio = IsSettingsRadioControl(controlId);
+    const bool checked = IsSettingsOptionChecked(controlId);
+    RECT rect = drawItem->rcItem;
+
+    FillRect(drawItem->hDC, &rect, GetPopupSurfaceBrush());
+
+    const int glyphSize = 14;
+    RECT glyph{
+        rect.left + 1,
+        rect.top + ((rect.bottom - rect.top) - glyphSize) / 2,
+        rect.left + 1 + glyphSize,
+        rect.top + ((rect.bottom - rect.top) - glyphSize) / 2 + glyphSize
+    };
+
+    const COLORREF border = checked ? ThemeAccent() : ThemePopupBorder();
+    const COLORREF fill = checked ? ThemeAccent() : ThemePopupSurface();
+    HBRUSH glyphBrush = CreateSolidBrush(fill);
+    HPEN glyphPen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldBrush = SelectObject(drawItem->hDC, glyphBrush);
+    HGDIOBJ oldPen = SelectObject(drawItem->hDC, glyphPen);
+    if (radio)
+        Ellipse(drawItem->hDC, glyph.left, glyph.top, glyph.right, glyph.bottom);
+    else
+        RoundRect(drawItem->hDC, glyph.left, glyph.top, glyph.right, glyph.bottom, 4, 4);
+    SelectObject(drawItem->hDC, oldPen);
+    SelectObject(drawItem->hDC, oldBrush);
+    DeleteObject(glyphPen);
+    DeleteObject(glyphBrush);
+
+    if (checked)
+    {
+        if (radio)
+        {
+            RECT dot{ glyph.left + 4, glyph.top + 4, glyph.right - 4, glyph.bottom - 4 };
+            HBRUSH dotBrush = CreateSolidBrush(RGB(255, 255, 255));
+            HPEN dotPen = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
+            oldBrush = SelectObject(drawItem->hDC, dotBrush);
+            oldPen = SelectObject(drawItem->hDC, dotPen);
+            Ellipse(drawItem->hDC, dot.left, dot.top, dot.right, dot.bottom);
+            SelectObject(drawItem->hDC, oldPen);
+            SelectObject(drawItem->hDC, oldBrush);
+            DeleteObject(dotPen);
+            DeleteObject(dotBrush);
+        }
+        else
+        {
+            HPEN checkPen = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+            oldPen = SelectObject(drawItem->hDC, checkPen);
+            MoveToEx(drawItem->hDC, glyph.left + 3, glyph.top + 7, nullptr);
+            LineTo(drawItem->hDC, glyph.left + 6, glyph.top + 10);
+            LineTo(drawItem->hDC, glyph.right - 3, glyph.top + 4);
+            SelectObject(drawItem->hDC, oldPen);
+            DeleteObject(checkPen);
+        }
+    }
+
+    wchar_t text[128]{};
+    GetWindowTextW(drawItem->hwndItem, text, static_cast<int>(sizeof(text) / sizeof(text[0])));
+    RECT textRect{ glyph.right + 7, rect.top, rect.right, rect.bottom };
+    SetBkMode(drawItem->hDC, TRANSPARENT);
+    SetTextColor(drawItem->hDC, ThemePopupText());
+    DrawTextW(drawItem->hDC, text, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    if (drawItem->itemState & ODS_FOCUS)
+    {
+        RECT focusRect = rect;
+        focusRect.right -= 2;
+        DrawFocusRect(drawItem->hDC, &focusRect);
+    }
+}
+
+HWND CreateSettingsControl(HWND parent, const wchar_t* className, const wchar_t* text,
+    DWORD style, int x, int y, int width, int height, int id)
+{
+    HWND control = CreateWindowExW(0, className, text, WS_CHILD | WS_VISIBLE | style,
+        x, y, width, height, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), hInst, nullptr);
+    SetControlFont(control);
+    return control;
+}
+
+void InitializeSettingsControls(HWND settingsWindow)
+{
+    g_settingsDraftTheme = g_appTheme;
+    g_settingsDraftLanguage = g_appLanguage;
+    g_settingsDraftRestorePreviousFiles = g_restorePreviousFilesOnStartup;
+
+    CreateSettingsControl(settingsWindow, L"STATIC", UiText(L"\u4E3B\u9898", L"Theme"),
+        SS_LEFTNOWORDWRAP, 30, 20, 280, 20, IDC_STATIC);
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u6D45\u8272\u6A21\u5F0F", L"Light"),
+        BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, 42, 50, 120, 22, IDC_SETTINGS_THEME_LIGHT);
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u6697\u9ED1\u6A21\u5F0F", L"Dark"),
+        BS_OWNERDRAW | WS_TABSTOP, 186, 50, 120, 22, IDC_SETTINGS_THEME_DARK);
+
+    CreateSettingsControl(settingsWindow, L"STATIC", UiText(L"\u754C\u9762\u8BED\u8A00", L"Interface Language"),
+        SS_LEFTNOWORDWRAP, 30, 104, 280, 20, IDC_STATIC);
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u4E2D\u6587", L"Chinese"),
+        BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, 42, 134, 120, 22, IDC_SETTINGS_LANGUAGE_CHINESE);
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u82F1\u6587", L"English"),
+        BS_OWNERDRAW | WS_TABSTOP, 186, 134, 120, 22, IDC_SETTINGS_LANGUAGE_ENGLISH);
+
+    CreateSettingsControl(settingsWindow, L"STATIC", UiText(L"\u542F\u52A8", L"Startup"),
+        SS_LEFTNOWORDWRAP, 30, 188, 280, 20, IDC_STATIC);
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u6253\u5F00\u4E0A\u6B21\u7684\u6587\u4EF6", L"Open previous files"),
+        BS_OWNERDRAW | WS_TABSTOP, 42, 218, 220, 22, IDC_SETTINGS_RESTORE_PREVIOUS_FILES);
+
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u786E\u5B9A", L"OK"),
+        BS_OWNERDRAW | WS_TABSTOP, 166, 268, 80, 28, IDOK);
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u53D6\u6D88", L"Cancel"),
+        BS_OWNERDRAW | WS_TABSTOP, 256, 268, 80, 28, IDCANCEL);
+
+    RedrawSettingsOptions(settingsWindow);
+}
+
+void ApplySettingsFromWindow(HWND settingsWindow)
+{
+    UNREFERENCED_PARAMETER(settingsWindow);
+
+    const AppTheme selectedTheme = g_settingsDraftTheme;
+    const AppLanguage selectedLanguage = g_settingsDraftLanguage;
+    const bool selectedRestorePreviousFiles = g_settingsDraftRestorePreviousFiles;
+
+    const bool themeChanged = selectedTheme != g_appTheme;
+    const bool languageChanged = selectedLanguage != g_appLanguage;
+    g_appTheme = selectedTheme;
+    g_appLanguage = selectedLanguage;
+    g_restorePreviousFilesOnStartup = selectedRestorePreviousFiles;
+    SaveAppSettings();
+
+    if (themeChanged)
+        ApplyAppTheme();
+    if (languageChanged)
+    {
+        UpdateMainMenuText();
+        if (g_findWindow)
+            g_findWindow->UpdateThemeAndLanguage(IsDarkTheme(), g_appLanguage == AppLanguage::Chinese);
+        InvalidateStatusBar();
+    }
+}
+
+void ShowSettingsWindow()
+{
+    if (g_hSettingsWindow)
+    {
+        ShowWindow(g_hSettingsWindow, SW_SHOW);
+        SetForegroundWindow(g_hSettingsWindow);
+        return;
+    }
+
+    RECT ownerRect{};
+    GetWindowRect(hWnd, &ownerRect);
+    RECT windowRect{ 0, 0, 360, 316 };
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    const DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT;
+    AdjustWindowRectEx(&windowRect, style, FALSE, exStyle);
+
+    const int width = windowRect.right - windowRect.left;
+    const int height = windowRect.bottom - windowRect.top;
+    const int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - width) / 2;
+    const int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - height) / 2;
+
+    g_hSettingsWindow = CreateWindowExW(exStyle, kSettingsWindowClassName,
+        UiText(L"\u8BBE\u7F6E", L"Settings"), style,
+        x, y, width, height, hWnd, nullptr, hInst, nullptr);
+
+    if (!g_hSettingsWindow)
+        return;
+
+    ApplyWindowChromeTheme(g_hSettingsWindow);
+    EnableWindow(hWnd, FALSE);
+    ShowWindow(g_hSettingsWindow, SW_SHOW);
+    UpdateWindow(g_hSettingsWindow);
+}
+
+void InitializeAboutControls(HWND aboutWindow)
+{
+    HWND icon = CreateSettingsControl(aboutWindow, L"STATIC", L"",
+        SS_ICON, 26, 34, 36, 36, IDC_STATIC);
+    if (icon)
+        SendMessageW(icon, STM_SETICON, reinterpret_cast<WPARAM>(LoadIcon(hInst, MAKEINTRESOURCE(IDI_OPENEDIT))), 0);
+
+    CreateSettingsControl(aboutWindow, L"STATIC", L"openedit",
+        SS_LEFTNOWORDWRAP, 78, 30, 220, 24, IDC_STATIC);
+    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0", L"Version 1.0"),
+        SS_LEFTNOWORDWRAP, 78, 58, 220, 20, IDC_STATIC);
+    SYSTEMTIME localTime{};
+    GetLocalTime(&localTime);
+    const std::wstring copyrightText = g_appLanguage == AppLanguage::Chinese ?
+        (std::wstring(L"\u7248\u6743\u6240\u6709 (c) ") + std::to_wstring(localTime.wYear)) :
+        (std::wstring(L"Copyright (c) ") + std::to_wstring(localTime.wYear));
+    CreateSettingsControl(aboutWindow, L"STATIC", copyrightText.c_str(),
+        SS_LEFTNOWORDWRAP, 78, 82, 220, 20, IDC_STATIC);
+    CreateSettingsControl(aboutWindow, L"BUTTON", UiText(L"\u786E\u5B9A", L"OK"),
+        BS_OWNERDRAW | WS_TABSTOP, 224, 126, 80, 28, IDOK);
+}
+
+void ShowAboutWindow()
+{
+    if (g_hAboutWindow)
+    {
+        ShowWindow(g_hAboutWindow, SW_SHOW);
+        SetForegroundWindow(g_hAboutWindow);
+        return;
+    }
+
+    RECT ownerRect{};
+    GetWindowRect(hWnd, &ownerRect);
+    RECT windowRect{ 0, 0, 330, 172 };
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    const DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT;
+    AdjustWindowRectEx(&windowRect, style, FALSE, exStyle);
+
+    const int width = windowRect.right - windowRect.left;
+    const int height = windowRect.bottom - windowRect.top;
+    const int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - width) / 2;
+    const int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - height) / 2;
+
+    g_hAboutWindow = CreateWindowExW(exStyle, kAboutWindowClassName,
+        UiText(L"\u5173\u4E8E openedit", L"About openedit"), style,
+        x, y, width, height, hWnd, nullptr, hInst, nullptr);
+
+    if (!g_hAboutWindow)
+        return;
+
+    ApplyWindowChromeTheme(g_hAboutWindow);
+    EnableWindow(hWnd, FALSE);
+    ShowWindow(g_hAboutWindow, SW_SHOW);
+    UpdateWindow(g_hAboutWindow);
+}
+
+LRESULT CALLBACK AboutWndProc(HWND aboutWindow, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_CREATE:
+        InitializeAboutControls(aboutWindow);
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(aboutWindow, &ps);
+        RECT clientRect{};
+        GetClientRect(aboutWindow, &clientRect);
+        FillRect(hdc, &clientRect, GetPopupBackBrush());
+        DrawRoundedPanel(hdc, RECT{ 16, 18, 314, 112 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        EndPaint(aboutWindow, &ps);
+        return 0;
+    }
+
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
+        {
+            DestroyWindow(aboutWindow);
+            return 0;
+        }
+        break;
+
+    case WM_DRAWITEM:
+        DrawOwnerButton(reinterpret_cast<DRAWITEMSTRUCT*>(lParam));
+        return TRUE;
+
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetTextColor(hdc, ThemePopupText());
+        SetBkMode(hdc, TRANSPARENT);
+        SetBkColor(hdc, ThemePopupSurface());
+        return reinterpret_cast<LRESULT>(GetPopupSurfaceBrush());
+    }
+
+    case WM_CLOSE:
+        DestroyWindow(aboutWindow);
+        return 0;
+
+    case WM_DESTROY:
+        if (g_hAboutWindow == aboutWindow)
+            g_hAboutWindow = nullptr;
+        EnableWindow(hWnd, TRUE);
+        SetActiveWindow(hWnd);
+        return 0;
+    }
+
+    return DefWindowProc(aboutWindow, message, wParam, lParam);
+}
+
+LRESULT CALLBACK SettingsWndProc(HWND settingsWindow, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_CREATE:
+        InitializeSettingsControls(settingsWindow);
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(settingsWindow, &ps);
+        RECT clientRect{};
+        GetClientRect(settingsWindow, &clientRect);
+        FillRect(hdc, &clientRect, GetPopupBackBrush());
+        DrawRoundedPanel(hdc, RECT{ 16, 14, 344, 88 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        DrawRoundedPanel(hdc, RECT{ 16, 98, 344, 172 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        DrawRoundedPanel(hdc, RECT{ 16, 182, 344, 252 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        EndPaint(settingsWindow, &ps);
+        return 0;
+    }
+
+    case WM_COMMAND:
+    {
+        const int commandId = LOWORD(wParam);
+        const int notification = HIWORD(wParam);
+        if (notification == BN_CLICKED)
+        {
+            if (commandId == IDC_SETTINGS_THEME_LIGHT || commandId == IDC_SETTINGS_THEME_DARK)
+            {
+                g_settingsDraftTheme = commandId == IDC_SETTINGS_THEME_LIGHT ? AppTheme::Light : AppTheme::Dark;
+                RedrawSettingsOptions(settingsWindow);
+                return 0;
+            }
+            if (commandId == IDC_SETTINGS_LANGUAGE_CHINESE || commandId == IDC_SETTINGS_LANGUAGE_ENGLISH)
+            {
+                g_settingsDraftLanguage = commandId == IDC_SETTINGS_LANGUAGE_CHINESE ? AppLanguage::Chinese : AppLanguage::English;
+                RedrawSettingsOptions(settingsWindow);
+                return 0;
+            }
+            if (commandId == IDC_SETTINGS_RESTORE_PREVIOUS_FILES)
+            {
+                g_settingsDraftRestorePreviousFiles = !g_settingsDraftRestorePreviousFiles;
+                RedrawWindow(GetDlgItem(settingsWindow, commandId), nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
+                return 0;
+            }
+        }
+
+        if (commandId == IDOK)
+        {
+            ApplySettingsFromWindow(settingsWindow);
+            DestroyWindow(settingsWindow);
+            return 0;
+        }
+        if (commandId == IDCANCEL)
+        {
+            DestroyWindow(settingsWindow);
+            return 0;
+        }
+        break;
+    }
+
+    case WM_DRAWITEM:
+    {
+        DRAWITEMSTRUCT* drawItem = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (drawItem && IsSettingsOptionControl(GetDlgCtrlID(drawItem->hwndItem)))
+            DrawPopupOptionControl(drawItem);
+        else
+            DrawOwnerButton(drawItem);
+        return TRUE;
+    }
+
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetTextColor(hdc, ThemePopupText());
+        SetBkMode(hdc, TRANSPARENT);
+        SetBkColor(hdc, ThemePopupSurface());
+        return reinterpret_cast<LRESULT>(GetPopupSurfaceBrush());
+    }
+
+    case WM_CLOSE:
+        DestroyWindow(settingsWindow);
+        return 0;
+
+    case WM_DESTROY:
+        if (g_hSettingsWindow == settingsWindow)
+            g_hSettingsWindow = nullptr;
+        EnableWindow(hWnd, TRUE);
+        SetActiveWindow(hWnd);
+        return 0;
+    }
+
+    return DefWindowProc(settingsWindow, message, wParam, lParam);
+}
+
+LRESULT CALLBACK FolderSplitterPreviewWndProc(HWND previewWindow, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_NCHITTEST:
+        return HTTRANSPARENT;
+
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(previewWindow, &ps);
+
+        RECT clientRect{};
+        GetClientRect(previewWindow, &clientRect);
+        HBRUSH background = CreateSolidBrush(kFolderSplitterPreviewBackColor);
+        FillRect(hdc, &clientRect, background);
+        DeleteObject(background);
+
+        SetBkMode(hdc, TRANSPARENT);
+        HPEN linePen = CreatePen(PS_DASH, 1, kFolderSplitterPreviewLineColor);
+        HGDIOBJ oldPen = SelectObject(hdc, linePen);
+        const int centerX = (clientRect.right - clientRect.left) / 2;
+        MoveToEx(hdc, centerX, clientRect.top, nullptr);
+        LineTo(hdc, centerX, clientRect.bottom);
+        SelectObject(hdc, oldPen);
+        DeleteObject(linePen);
+
+        EndPaint(previewWindow, &ps);
+        return 0;
+    }
+    }
+
+    return DefWindowProc(previewWindow, message, wParam, lParam);
+}
+
+int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
+    _In_opt_ HINSTANCE hPrevInstance,
+    _In_ LPWSTR    lpCmdLine,
+    _In_ int       nCmdShow)
+{
+    UNREFERENCED_PARAMETER(hPrevInstance);
+    UNREFERENCED_PARAMETER(lpCmdLine);
+
+    const HRESULT coInitializeResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    INITCOMMONCONTROLSEX commonControls{};
+    commonControls.dwSize = sizeof(commonControls);
+    commonControls.dwICC = ICC_TREEVIEW_CLASSES | ICC_WIN95_CLASSES | ICC_BAR_CLASSES;
+    InitCommonControlsEx(&commonControls);
+    g_findReplaceMessage = RegisterWindowMessageW(FINDMSGSTRINGW);
+    LoadAppSettings();
+    EnableNativeDarkMenuMode(IsDarkTheme());
+
+    // 初始化字符串
+    LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
+    LoadStringW(hInstance, IDC_OPENEDIT, szWindowClass, MAX_LOADSTRING);
+
+    // 必须先注册Scintilla窗口类
+    Scintilla_RegisterClasses(hInstance);
+
+    // 注册主窗口类
+    MyRegisterClass(hInstance);
+
+    // 初始化实例
+    if (!InitInstance(hInstance, nCmdShow))
+    {
+        if (SUCCEEDED(coInitializeResult))
+            CoUninitialize();
+        return FALSE;
+    }
+
+    // 加载快捷键
+    HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_OPENEDIT));
+
+    // 消息循环
+    MSG msg = { 0 };
+    while (GetMessage(&msg, nullptr, 0, 0))
+    {
+        if (g_hSettingsWindow && IsDialogMessageW(g_hSettingsWindow, &msg))
+            continue;
+        if (g_hAboutWindow && IsDialogMessageW(g_hAboutWindow, &msg))
+            continue;
+
+        if (g_findWindow && g_findWindow->IsVisible())
+        {
+            HWND findWindow = g_findWindow->Window();
+            if (findWindow && (msg.hwnd == findWindow || IsChild(findWindow, msg.hwnd)))
+            {
+                if (!g_findWindow->TranslateDialogMessage(msg))
+                {
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+                }
+                continue;
+            }
+        }
+
+        if (!TranslateAccelerator(hWnd, hAccelTable, &msg))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+
+    if (SUCCEEDED(coInitializeResult))
+        CoUninitialize();
+
+    return (int)msg.wParam;
+}
+
+ATOM MyRegisterClass(HINSTANCE hInstance)
+{
+    WNDCLASSEXW tabClass = { 0 };
+    tabClass.cbSize = sizeof(WNDCLASSEX);
+    tabClass.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+    tabClass.lpfnWndProc = TabBarWndProc;
+    tabClass.hInstance = hInstance;
+    tabClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    tabClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    tabClass.lpszClassName = kTabBarClassName;
+    RegisterClassExW(&tabClass);
+
+    WNDCLASSEXW statusClass = { 0 };
+    statusClass.cbSize = sizeof(WNDCLASSEX);
+    statusClass.style = CS_HREDRAW | CS_VREDRAW;
+    statusClass.lpfnWndProc = StatusBarWndProc;
+    statusClass.hInstance = hInstance;
+    statusClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    statusClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    statusClass.lpszClassName = kStatusBarClassName;
+    RegisterClassExW(&statusClass);
+
+    WNDCLASSEXW settingsClass = { 0 };
+    settingsClass.cbSize = sizeof(WNDCLASSEX);
+    settingsClass.style = CS_HREDRAW | CS_VREDRAW;
+    settingsClass.lpfnWndProc = SettingsWndProc;
+    settingsClass.hInstance = hInstance;
+    settingsClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    settingsClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    settingsClass.lpszClassName = kSettingsWindowClassName;
+    RegisterClassExW(&settingsClass);
+
+    WNDCLASSEXW aboutClass = { 0 };
+    aboutClass.cbSize = sizeof(WNDCLASSEX);
+    aboutClass.style = CS_HREDRAW | CS_VREDRAW;
+    aboutClass.lpfnWndProc = AboutWndProc;
+    aboutClass.hInstance = hInstance;
+    aboutClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    aboutClass.hbrBackground = nullptr;
+    aboutClass.lpszClassName = kAboutWindowClassName;
+    RegisterClassExW(&aboutClass);
+
+    WNDCLASSEXW splitterPreviewClass = { 0 };
+    splitterPreviewClass.cbSize = sizeof(WNDCLASSEX);
+    splitterPreviewClass.style = CS_HREDRAW | CS_VREDRAW;
+    splitterPreviewClass.lpfnWndProc = FolderSplitterPreviewWndProc;
+    splitterPreviewClass.hInstance = hInstance;
+    splitterPreviewClass.hCursor = LoadCursor(nullptr, IDC_SIZEWE);
+    splitterPreviewClass.hbrBackground = nullptr;
+    splitterPreviewClass.lpszClassName = kFolderSplitterPreviewClassName;
+    RegisterClassExW(&splitterPreviewClass);
+
+    WNDCLASSEXW wcex = { 0 };
+    wcex.cbSize = sizeof(WNDCLASSEX);
+    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc = WndProc;
+    wcex.hInstance = hInstance;
+    wcex.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_OPENEDIT));
+    wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcex.hbrBackground = nullptr;
+    wcex.lpszMenuName = MAKEINTRESOURCEW(IDC_OPENEDIT);
+    wcex.lpszClassName = szWindowClass;
+    wcex.hIconSm = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
+
+    return RegisterClassExW(&wcex);
+}
+
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
+{
+    hInst = hInstance;
+
+    // 创建主窗口
+    hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+        CW_USEDEFAULT, 0, 800, 600, nullptr, nullptr, hInstance, nullptr);
+
+    if (!hWnd) return FALSE;
+
+    ShowWindow(hWnd, nCmdShow);
+    UpdateWindow(hWnd);
+
+    return TRUE;
+}
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (g_findReplaceMessage && message == g_findReplaceMessage)
+        return HandleFindReplaceMessage(lParam);
+
+    switch (message)
+    {
+    case WM_MEASUREITEM:
+    {
+        MEASUREITEMSTRUCT* measureItem = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
+        if (measureItem && measureItem->CtlType == ODT_MENU)
+        {
+            MeasureThemedMenuItem(measureItem);
+            return TRUE;
+        }
+        break;
+    }
+
+    case WM_DRAWITEM:
+    {
+        DRAWITEMSTRUCT* drawItem = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (drawItem && drawItem->CtlType == ODT_MENU)
+        {
+            DrawThemedMenuItem(drawItem);
+            return TRUE;
+        }
+        break;
+    }
+
+    case WM_COMMAND:
+    {
+        int wmId = LOWORD(wParam);
+        if (wmId == IDM_FILE_NEW)
+        {
+            NewFile();
+        }
+        else if (wmId == IDM_FILE_OPEN)
+        {
+            OpenFileCommand();
+        }
+        else if (wmId == IDM_FILE_OPEN_FOLDER)
+        {
+            OpenFolderCommand();
+        }
+        else if (wmId == IDM_FILE_SAVE)
+        {
+            SaveCurrentFile();
+        }
+        else if (wmId == IDM_FILE_SAVE_AS)
+        {
+            SaveCurrentFileAs();
+        }
+        else if (wmId == IDM_FILE_CLOSE_FOLDER)
+        {
+            ClearFolderPane();
+        }
+        else if (wmId == IDM_FOLDER_REFRESH)
+        {
+            RefreshFolderTreeItem(GetFolderTreeSelection());
+        }
+        else if (wmId == IDM_FOLDER_COPY_NAME)
+        {
+            CopySelectedFolderItemName();
+        }
+        else if (wmId == IDM_FOLDER_OPEN_EXPLORER)
+        {
+            OpenSelectedFolderItemInExplorer();
+        }
+        else if (wmId == IDM_TAB_CLOSE)
+        {
+            CloseTab(g_contextTabIndex >= 0 ? g_contextTabIndex : g_activeTabIndex);
+            g_contextTabIndex = -1;
+        }
+        else if (wmId == IDM_TAB_CLOSE_OTHERS)
+        {
+            const int keepIndex = g_contextTabIndex >= 0 ? g_contextTabIndex : g_activeTabIndex;
+            for (int index = static_cast<int>(g_tabs.size()) - 1; index >= 0; --index)
+            {
+                if (index != keepIndex)
+                    CloseTab(index);
+            }
+            g_contextTabIndex = -1;
+        }
+        else if (wmId == IDM_TAB_CLOSE_ALL)
+        {
+            while (!g_tabs.empty())
+            {
+                const int previousCount = static_cast<int>(g_tabs.size());
+                CloseTab(0);
+                if (static_cast<int>(g_tabs.size()) == previousCount)
+                    break;
+                if (g_tabs.size() == 1 && g_tabs[0].untitled && !g_tabs[0].modified && g_tabs[0].text.empty())
+                    break;
+            }
+            g_contextTabIndex = -1;
+        }
+        else if (IsEditCommand(wmId))
+        {
+            ExecuteEditCommand(wmId);
+        }
+        else if (wmId == IDM_SEARCH_FIND)
+        {
+            OpenFindReplaceDialog(false);
+        }
+        else if (wmId == IDM_SEARCH_FIND_NEXT)
+        {
+            FindNextCommand(true);
+        }
+        else if (wmId == IDM_SEARCH_FIND_PREVIOUS)
+        {
+            FindNextCommand(false);
+        }
+        else if (wmId == IDM_SEARCH_REPLACE)
+        {
+            OpenFindReplaceDialog(true);
+        }
+        else if (wmId >= IDM_ENCODING_UTF8 && wmId <= IDM_ENCODING_UTF16_BE)
+        {
+            SetActiveDocumentEncoding(EncodingFromCommand(wmId));
+        }
+        else if (wmId >= IDM_EOL_WINDOWS && wmId <= IDM_EOL_MAC)
+        {
+            SetActiveDocumentEolMode(EolModeFromCommand(wmId));
+        }
+        else if (wmId == IDM_VIEW_SHOW_SPACE_TAB)
+        {
+            ToggleShowSpaceAndTab();
+        }
+        else if (wmId == IDM_VIEW_SHOW_EOL)
+        {
+            ToggleShowEndOfLine();
+        }
+        else if (wmId == IDM_VIEW_SHOW_ALL_CHARS)
+        {
+            ToggleShowAllCharacters();
+        }
+        else if (wmId == IDM_VIEW_WORD_WRAP)
+        {
+            ToggleWordWrap();
+        }
+        else if (wmId == IDM_VIEW_TOGGLE_FOLDER)
+        {
+            ToggleFolderPane();
+        }
+        else if (IsLanguageCommand(wmId))
+        {
+            ApplyLanguage(wmId);
+        }
+        else if (wmId == IDM_SETTINGS_OPEN)
+        {
+            ShowSettingsWindow();
+        }
+        else if (wmId == IDM_ABOUT)
+        {
+            ShowAboutWindow();
+        }
+        else if (wmId == IDM_EXIT)
+        {
+            SendMessageW(hWnd, WM_CLOSE, 0, 0);
+        }
+        else
+        {
+            return DefWindowProc(hWnd, message, wParam, lParam);
+        }
+    }
+    break;
+
+    case WM_ERASEBKGND:
+        FillMainClientBackground(reinterpret_cast<HDC>(wParam));
+        return 1;
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+        FillMainClientBackground(hdc);
+        EndPaint(hWnd, &ps);
+    }
+    break;
+
+    case WM_NOTIFY:
+    {
+        const NMHDR* header = reinterpret_cast<NMHDR*>(lParam);
+        if (header && header->hwndFrom == g_hFolderTree)
+        {
+            if (header->code == NM_CUSTOMDRAW)
+            {
+                return HandleFolderTreeCustomDraw(lParam);
+            }
+            else if (header->code == TVN_ITEMEXPANDINGW)
+            {
+                NMTREEVIEWW* treeView = reinterpret_cast<NMTREEVIEWW*>(lParam);
+                if (treeView->action == TVE_EXPAND)
+                    LoadFolderNodeChildren(treeView->itemNew.hItem, reinterpret_cast<FolderItem*>(treeView->itemNew.lParam));
+            }
+            else if (header->code == TVN_ITEMEXPANDEDW)
+            {
+                NMTREEVIEWW* treeView = reinterpret_cast<NMTREEVIEWW*>(lParam);
+                UpdateFolderNodeIcon(treeView->itemNew.hItem, treeView->action == TVE_EXPAND);
+            }
+            else if (header->code == NM_CLICK)
+            {
+                HandleFolderTreeSingleClick();
+                return 0;
+            }
+            else if (header->code == NM_RCLICK)
+            {
+                DWORD cursorPosition = GetMessagePos();
+                POINT screenPoint{ GET_X_LPARAM(cursorPosition), GET_Y_LPARAM(cursorPosition) };
+                ShowFolderTreeContextMenu(screenPoint);
+                return 1;
+            }
+        }
+        else if (header && header->hwndFrom == g_hSci && !g_loadingTabContent)
+        {
+            if (header->code == SCN_SAVEPOINTLEFT)
+            {
+                SetActiveTabModified(true);
+                InvalidateStatusBar();
+            }
+            else if (header->code == SCN_SAVEPOINTREACHED)
+            {
+                CaptureActiveTab();
+                InvalidateTabBar();
+                InvalidateStatusBar();
+            }
+            else if (header->code == SCN_MODIFIED)
+            {
+                const SCNotification* notification = reinterpret_cast<SCNotification*>(lParam);
+                if (notification->modificationType & (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT))
+                {
+                    ClearWordHighlights();
+                    SetActiveTabModified(true);
+                }
+                InvalidateStatusBar();
+            }
+            else if (header->code == SCN_UPDATEUI)
+            {
+                InvalidateStatusBar();
+            }
+            else if (header->code == SCN_DOUBLECLICK)
+            {
+                HighlightSelectedWordOccurrences();
+            }
+        }
+        return 0;
+    }
+
+    case WM_CREATE:
+    {
+        ::hWnd = hWnd;
+        ApplyWindowChromeTheme(hWnd);
+        UpdateMainMenuText();
+
+        g_hFolderTree = CreateWindowExW(
+            0,
+            WC_TREEVIEWW,
+            L"",
+            WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT |
+                TVS_SHOWSELALWAYS | TVS_NOHSCROLL,
+            0, 0, 0, 0,
+            hWnd,
+            reinterpret_cast<HMENU>(IDC_FOLDER_TREE),
+            hInst,
+            nullptr
+        );
+
+        if (g_hFolderTree)
+        {
+            TreeView_SetExtendedStyle(g_hFolderTree, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
+            g_originalFolderTreeProc = reinterpret_cast<WNDPROC>(
+                SetWindowLongPtrW(g_hFolderTree, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(FolderTreeWndProc)));
+            SendMessageW(g_hFolderTree, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+            ApplyFolderTreeTheme();
+            InitializeFolderTreeImageList();
+        }
+
+        g_hTabBar = CreateWindowExW(
+            0,
+            kTabBarClassName,
+            L"",
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            0, 0, 0, 0,
+            hWnd,
+            reinterpret_cast<HMENU>(IDC_TAB_BAR),
+            hInst,
+            nullptr
+        );
+
+        if (g_hTabBar)
+            SendMessageW(g_hTabBar, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+
+        g_hStatusBar = CreateWindowExW(
+            0,
+            kStatusBarClassName,
+            L"",
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            0, 0, 0, 0,
+            hWnd,
+            reinterpret_cast<HMENU>(IDC_STATUS_BAR),
+            hInst,
+            nullptr
+        );
+
+        if (g_hStatusBar)
+            SendMessageW(g_hStatusBar, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+
+        // 创建Scintilla子窗口
+        g_hSci = CreateWindowExW(
+            0,
+            L"Scintilla",
+            L"",
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_TABSTOP,
+            0, 0, 0, 0,
+            hWnd,
+            nullptr,
+            hInst,
+            nullptr
+        );
+        
+        if (g_hSci)
+        {
+            ApplyControlTheme(g_hSci);
+            g_pSciFn = reinterpret_cast<SciFnDirect>(SendMessage(g_hSci, SCI_GETDIRECTFUNCTION, 0, 0));
+            g_pSciPtr = static_cast<sptr_t>(SendMessage(g_hSci, SCI_GETDIRECTPOINTER, 0, 0));
+
+            InitScintillaEditor();
+            if (!LoadStartupTabs())
+                AddDocumentTab(CreateDefaultUntitledTab());
+            LayoutChildWindows();
+            SetFocus(g_hSci);
+        }
+        return 0;
+    }
+
+    case WM_SIZE:
+    {
+        LayoutChildWindows();
+        RedrawFolderToggleButton();
+        return 0;
+    }
+
+    case WM_SETCURSOR:
+    {
+        if (LOWORD(lParam) == HTCLIENT && g_folderPaneVisible)
+        {
+            POINT point{};
+            GetCursorPos(&point);
+            ScreenToClient(hWnd, &point);
+            if (g_draggingFolderSplitter || IsPointOnFolderSplitter(point))
+            {
+                SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+                return TRUE;
+            }
+        }
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+
+    case WM_CONTEXTMENU:
+        if (reinterpret_cast<HWND>(wParam) == g_hFolderTree)
+        {
+            POINT screenPoint{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (screenPoint.x == -1 && screenPoint.y == -1)
+            {
+                HTREEITEM selected = GetFolderTreeSelection();
+                RECT itemRect{};
+                if (selected && TreeView_GetItemRect(g_hFolderTree, selected, &itemRect, TRUE))
+                {
+                    screenPoint.x = itemRect.left;
+                    screenPoint.y = itemRect.bottom;
+                    ClientToScreen(g_hFolderTree, &screenPoint);
+                }
+                else
+                {
+                    GetCursorPos(&screenPoint);
+                }
+            }
+            ShowFolderTreeContextMenu(screenPoint);
+            return 0;
+        }
+        break;
+
+    case WM_LBUTTONDOWN:
+    {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        if (g_folderPaneVisible && IsPointOnFolderSplitter(point))
+        {
+            g_draggingFolderSplitter = true;
+            UpdateFolderSplitterPreview(GetEffectiveFolderPaneWidth());
+            SetCapture(hWnd);
+            SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+            return 0;
+        }
+        break;
+    }
+
+    case WM_MOUSEMOVE:
+        if (g_draggingFolderSplitter)
+        {
+            RECT clientRect{};
+            GetClientRect(hWnd, &clientRect);
+            const int clientWidth = clientRect.right - clientRect.left;
+            const int requestedWidth = GET_X_LPARAM(lParam);
+            const int newWidth = ClampFolderPaneWidth(requestedWidth, clientWidth);
+            UpdateFolderSplitterPreview(newWidth);
+            return 0;
+        }
+        break;
+
+    case WM_LBUTTONUP:
+        if (g_draggingFolderSplitter)
+        {
+            const int newWidth = g_folderSplitterPreviewWidth >= 0 ? g_folderSplitterPreviewWidth : g_folderPaneWidth;
+            HideFolderSplitterPreview();
+            g_draggingFolderSplitter = false;
+            ReleaseCapture();
+            if (newWidth != g_folderPaneWidth)
+            {
+                g_folderPaneWidth = newWidth;
+                LayoutChildWindows();
+            }
+            return 0;
+        }
+        break;
+
+    case WM_CAPTURECHANGED:
+        HideFolderSplitterPreview();
+        g_draggingFolderSplitter = false;
+        break;
+
+    case WM_NCHITTEST:
+    {
+        LRESULT hit = DefWindowProc(hWnd, message, wParam, lParam);
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        RECT buttonRect = GetFolderToggleButtonRect(hWnd);
+        if (PtInRect(&buttonRect, point))
+            return HTFOLDERTOGGLE;
+        return hit;
+    }
+
+    case WM_NCLBUTTONDOWN:
+        if (wParam == HTFOLDERTOGGLE)
+        {
+            ToggleFolderPane();
+            return 0;
+        }
+        return DefWindowProc(hWnd, message, wParam, lParam);
+
+    case WM_NCLBUTTONUP:
+        if (wParam == HTFOLDERTOGGLE)
+            return 0;
+        return DefWindowProc(hWnd, message, wParam, lParam);
+
+    case WM_NCPAINT:
+    {
+        LRESULT result = DefWindowProc(hWnd, message, wParam, lParam);
+        DrawFolderToggleButton(hWnd);
+        return result;
+    }
+
+    case WM_NCACTIVATE:
+    {
+        LRESULT result = DefWindowProc(hWnd, message, wParam, lParam);
+        DrawFolderToggleButton(hWnd);
+        return result;
+    }
+
+    case WM_SETTEXT:
+    {
+        LRESULT result = DefWindowProc(hWnd, message, wParam, lParam);
+        DrawFolderToggleButton(hWnd);
+        return result;
+    }
+
+    case WM_CLOSE:
+        if (PromptSaveAllTabs())
+        {
+            SaveAppSettings();
+            SaveSessionState();
+            DestroyWindow(hWnd);
+        }
+        return 0;
+
+    case WM_DESTROY:
+        if (g_hFolderTreeImageList)
+        {
+            if (g_hFolderTree && IsWindow(g_hFolderTree))
+                TreeView_SetImageList(g_hFolderTree, nullptr, TVSIL_NORMAL);
+            ImageList_Destroy(g_hFolderTreeImageList);
+            g_hFolderTreeImageList = nullptr;
+        }
+        if (g_hFolderSplitterPreview && IsWindow(g_hFolderSplitterPreview))
+        {
+            DestroyWindow(g_hFolderSplitterPreview);
+            g_hFolderSplitterPreview = nullptr;
+        }
+        if (g_hAboutWindow && IsWindow(g_hAboutWindow))
+        {
+            DestroyWindow(g_hAboutWindow);
+            g_hAboutWindow = nullptr;
+        }
+        g_findWindow.reset();
+        if (g_hTabTooltip && IsWindow(g_hTabTooltip))
+        {
+            DestroyWindow(g_hTabTooltip);
+            g_hTabTooltip = nullptr;
+        }
+        DeleteObject(g_hPopupBackBrush);
+        DeleteObject(g_hPopupSurfaceBrush);
+        DeleteObject(g_hMenuBackBrush);
+        g_hPopupBackBrush = nullptr;
+        g_hPopupSurfaceBrush = nullptr;
+        g_hMenuBackBrush = nullptr;
+        PostQuitMessage(0);
+        break;
+
+    default:
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
+
+int GetTabBarTabWidth(HWND tabBar)
+{
+    UNREFERENCED_PARAMETER(tabBar);
+    return kTabWidth;
+}
+
+RECT GetTabBarTabRect(HWND tabBar, int tabIndex)
+{
+    RECT clientRect{};
+    GetClientRect(tabBar, &clientRect);
+
+    const int tabWidth = GetTabBarTabWidth(tabBar);
+    const int left = clientRect.left + (tabIndex * tabWidth);
+    return RECT{ left, clientRect.top, left + tabWidth, clientRect.bottom };
+}
+
+RECT GetTabCloseButtonRect(const RECT& tabRect)
+{
+    const int top = tabRect.top + ((tabRect.bottom - tabRect.top - kTabCloseSize) / 2);
+    return RECT{
+        tabRect.right - kTabCloseSize - 6,
+        top,
+        tabRect.right - 6,
+        top + kTabCloseSize
+    };
+}
+
+RECT GetTabSaveIconRect(const RECT& tabRect)
+{
+    const int top = tabRect.top + ((tabRect.bottom - tabRect.top - kTabSaveIconSize) / 2);
+    return RECT{
+        tabRect.left + 8,
+        top,
+        tabRect.left + 8 + kTabSaveIconSize,
+        top + kTabSaveIconSize
+    };
+}
+
+int HitTestTabBar(HWND tabBar, POINT point, bool* closeButton)
+{
+    if (closeButton)
+        *closeButton = false;
+
+    const int count = static_cast<int>(g_tabs.size());
+    for (int index = 0; index < count; ++index)
+    {
+        const RECT tabRect = GetTabBarTabRect(tabBar, index);
+        if (!PtInRect(&tabRect, point))
+            continue;
+
+        const RECT closeRect = GetTabCloseButtonRect(tabRect);
+        if (closeButton)
+            *closeButton = PtInRect(&closeRect, point);
+        return index;
+    }
+
+    return -1;
+}
+
+HWND EnsureTabTooltip(HWND tabBar)
+{
+    if (g_hTabTooltip && IsWindow(g_hTabTooltip))
+        return g_hTabTooltip;
+
+    g_hTabTooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+        tabBar, nullptr, hInst, nullptr);
+    if (!g_hTabTooltip)
+        return nullptr;
+
+    SetWindowPos(g_hTabTooltip, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SendMessageW(g_hTabTooltip, TTM_SETMAXTIPWIDTH, 0, 480);
+    SendMessageW(g_hTabTooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 250);
+
+    TOOLINFOW toolInfo{};
+    toolInfo.cbSize = sizeof(toolInfo);
+    toolInfo.uFlags = TTF_TRACK | TTF_ABSOLUTE;
+    toolInfo.hwnd = tabBar;
+    toolInfo.uId = 1;
+    toolInfo.lpszText = const_cast<LPWSTR>(L"");
+    GetClientRect(tabBar, &toolInfo.rect);
+    SendMessageW(g_hTabTooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&toolInfo));
+    return g_hTabTooltip;
+}
+
+void HideTabTooltip()
+{
+    if (!g_hTabTooltip || !IsWindow(g_hTabTooltip))
+        return;
+
+    TOOLINFOW toolInfo{};
+    toolInfo.cbSize = sizeof(toolInfo);
+    toolInfo.hwnd = g_hTabBar;
+    toolInfo.uId = 1;
+    SendMessageW(g_hTabTooltip, TTM_TRACKACTIVATE, FALSE, reinterpret_cast<LPARAM>(&toolInfo));
+}
+
+void UpdateTabTooltip(HWND tabBar, int tabIndex, POINT point)
+{
+    if (tabIndex < 0)
+    {
+        HideTabTooltip();
+        return;
+    }
+
+    HWND tooltip = EnsureTabTooltip(tabBar);
+    if (!tooltip)
+        return;
+
+    g_tabTooltipText = GetTabTooltipText(tabIndex);
+    if (g_tabTooltipText.empty())
+    {
+        HideTabTooltip();
+        return;
+    }
+
+    TOOLINFOW toolInfo{};
+    toolInfo.cbSize = sizeof(toolInfo);
+    toolInfo.hwnd = tabBar;
+    toolInfo.uId = 1;
+    toolInfo.lpszText = const_cast<LPWSTR>(g_tabTooltipText.c_str());
+    SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&toolInfo));
+
+    POINT screenPoint = point;
+    ClientToScreen(tabBar, &screenPoint);
+    SendMessageW(tooltip, TTM_TRACKPOSITION, 0, MAKELPARAM(screenPoint.x + 12, screenPoint.y + 20));
+    SendMessageW(tooltip, TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&toolInfo));
+}
+
+void UpdateTabHoverState(HWND tabBar, POINT point)
+{
+    bool closeButton = false;
+    const int tabIndex = HitTestTabBar(tabBar, point, &closeButton);
+    const int closeIndex = closeButton ? tabIndex : -1;
+    const bool changed = tabIndex != g_hoveredTabIndex || closeIndex != g_hoveredTabCloseIndex;
+
+    if (changed)
+    {
+        g_hoveredTabIndex = tabIndex;
+        g_hoveredTabCloseIndex = closeIndex;
+        InvalidateRect(tabBar, nullptr, TRUE);
+    }
+
+    UpdateTabTooltip(tabBar, tabIndex, point);
+
+    if (!g_trackingTabMouse)
+    {
+        TRACKMOUSEEVENT track{};
+        track.cbSize = sizeof(track);
+        track.dwFlags = TME_LEAVE;
+        track.hwndTrack = tabBar;
+        if (TrackMouseEvent(&track))
+            g_trackingTabMouse = true;
+    }
+}
+
+bool CloseTabAtPoint(HWND tabBar, POINT point)
+{
+    bool closeButton = false;
+    const int tabIndex = HitTestTabBar(tabBar, point, &closeButton);
+    if (tabIndex < 0 || !closeButton)
+        return false;
+
+    HideTabTooltip();
+    CloseTab(tabIndex);
+    UpdateTabHoverState(tabBar, point);
+    return true;
+}
+
+void DrawTabSaveIcon(HDC hdc, RECT iconRect, bool modified)
+{
+    const COLORREF iconColor = modified ? kTabSaveRed : kTabSaveBlue;
+    HPEN borderPen = CreatePen(PS_SOLID, 1, RGB(26, 55, 88));
+    HBRUSH bodyBrush = CreateSolidBrush(iconColor);
+    HGDIOBJ oldPen = SelectObject(hdc, borderPen);
+    HGDIOBJ oldBrush = SelectObject(hdc, bodyBrush);
+
+    Rectangle(hdc, iconRect.left, iconRect.top, iconRect.right, iconRect.bottom);
+
+    HBRUSH detailBrush = CreateSolidBrush(RGB(255, 255, 255));
+    RECT slotRect{ iconRect.left + 3, iconRect.top + 2, iconRect.right - 3, iconRect.top + 5 };
+    RECT labelRect{ iconRect.left + 4, iconRect.bottom - 5, iconRect.right - 4, iconRect.bottom - 2 };
+    FillRect(hdc, &slotRect, detailBrush);
+    FillRect(hdc, &labelRect, detailBrush);
+    DeleteObject(detailBrush);
+
+    SelectObject(hdc, oldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(bodyBrush);
+    DeleteObject(borderPen);
+}
+
+void DrawTabCloseButton(HDC hdc, RECT closeRect, bool hovered)
+{
+    if (hovered)
+    {
+        HBRUSH hoverBrush = CreateSolidBrush(ThemeTabCloseHoverBack());
+        HPEN hoverPen = CreatePen(PS_SOLID, 1, ThemeTabCloseHoverBack());
+        HGDIOBJ oldBrush = SelectObject(hdc, hoverBrush);
+        HGDIOBJ oldPen = SelectObject(hdc, hoverPen);
+        RoundRect(hdc, closeRect.left, closeRect.top, closeRect.right, closeRect.bottom, 4, 4);
+        SelectObject(hdc, oldPen);
+        SelectObject(hdc, oldBrush);
+        DeleteObject(hoverPen);
+        DeleteObject(hoverBrush);
+    }
+
+    HPEN closePen = CreatePen(PS_SOLID, hovered ? 2 : 1, hovered ? ThemeTabCloseHover() : ThemeTabClose());
+    HGDIOBJ oldPen = SelectObject(hdc, closePen);
+
+    MoveToEx(hdc, closeRect.left + 4, closeRect.top + 4, nullptr);
+    LineTo(hdc, closeRect.right - 4, closeRect.bottom - 4);
+    MoveToEx(hdc, closeRect.right - 5, closeRect.top + 4, nullptr);
+    LineTo(hdc, closeRect.left + 3, closeRect.bottom - 4);
+
+    SelectObject(hdc, oldPen);
+    DeleteObject(closePen);
+}
+
+void FillTopRoundedRect(HDC hdc, const RECT& rect, COLORREF color)
+{
+    HBRUSH brush = CreateSolidBrush(color);
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HGDIOBJ oldBrush = SelectObject(hdc, brush);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+
+    RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, kTabCornerRadius * 2, kTabCornerRadius * 2);
+
+    RECT bottomRect = rect;
+    bottomRect.top = (std::max)(rect.top, rect.bottom - kTabCornerRadius);
+    FillRect(hdc, &bottomRect, brush);
+
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
+void DrawTabBar(HWND tabBar, HDC hdc)
+{
+    RECT clientRect{};
+    GetClientRect(tabBar, &clientRect);
+
+    HBRUSH barBrush = CreateSolidBrush(ThemeTabBarBack());
+    FillRect(hdc, &clientRect, barBrush);
+    DeleteObject(barBrush);
+
+    HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    HGDIOBJ oldFont = SelectObject(hdc, font);
+    SetBkMode(hdc, TRANSPARENT);
+
+    const int count = static_cast<int>(g_tabs.size());
+    for (int index = 0; index < count; ++index)
+    {
+        const bool active = index == g_activeTabIndex;
+        RECT tabRect = GetTabBarTabRect(tabBar, index);
+        tabRect.bottom -= 1;
+
+        FillTopRoundedRect(hdc, tabRect, active ? ThemeTabActiveBack() : ThemeTabInactiveBack());
+
+        RECT saveRect = GetTabSaveIconRect(tabRect);
+        RECT closeRect = GetTabCloseButtonRect(tabRect);
+        DrawTabSaveIcon(hdc, saveRect, GetTabModifiedState(index));
+        DrawTabCloseButton(hdc, closeRect, index == g_hoveredTabCloseIndex);
+
+        RECT textRect{
+            saveRect.right + 6,
+            tabRect.top,
+            closeRect.left - 6,
+            tabRect.bottom
+        };
+        if (textRect.right > textRect.left)
+        {
+            SetTextColor(hdc, ThemeTabText());
+            const std::wstring title = GetTabDisplayTitle(g_tabs[index]);
+            DrawTextW(hdc, title.c_str(), -1, &textRect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        }
+    }
+
+    HPEN bottomPen = CreatePen(PS_SOLID, 1, ThemeTabBorder());
+    HGDIOBJ oldPen = SelectObject(hdc, bottomPen);
+    MoveToEx(hdc, clientRect.left, clientRect.bottom - 1, nullptr);
+    LineTo(hdc, clientRect.right, clientRect.bottom - 1);
+    SelectObject(hdc, oldPen);
+    DeleteObject(bottomPen);
+
+    SelectObject(hdc, oldFont);
+}
+
+LRESULT CALLBACK TabBarWndProc(HWND tabBar, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(tabBar, &ps);
+        DrawTabBar(tabBar, hdc);
+        EndPaint(tabBar, &ps);
+        return 0;
+    }
+
+    case WM_SIZE:
+        InvalidateRect(tabBar, nullptr, TRUE);
+        if (g_hTabTooltip && IsWindow(g_hTabTooltip))
+        {
+            TOOLINFOW toolInfo{};
+            toolInfo.cbSize = sizeof(toolInfo);
+            toolInfo.hwnd = tabBar;
+            toolInfo.uId = 1;
+            GetClientRect(tabBar, &toolInfo.rect);
+            SendMessageW(g_hTabTooltip, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&toolInfo));
+        }
+        return 0;
+
+    case WM_MOUSEMOVE:
+    {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        UpdateTabHoverState(tabBar, point);
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        g_trackingTabMouse = false;
+        if (g_hoveredTabIndex >= 0 || g_hoveredTabCloseIndex >= 0)
+        {
+            g_hoveredTabIndex = -1;
+            g_hoveredTabCloseIndex = -1;
+            InvalidateRect(tabBar, nullptr, TRUE);
+        }
+        HideTabTooltip();
+        return 0;
+
+    case WM_LBUTTONDOWN:
+    {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        if (CloseTabAtPoint(tabBar, point))
+            return 0;
+
+        const int tabIndex = HitTestTabBar(tabBar, point, nullptr);
+        if (tabIndex < 0)
+            return 0;
+
+        SwitchToTab(tabIndex);
+        return 0;
+    }
+
+    case WM_LBUTTONDBLCLK:
+    {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        if (CloseTabAtPoint(tabBar, point))
+            return 0;
+
+        const int tabIndex = HitTestTabBar(tabBar, point, nullptr);
+        if (tabIndex < 0)
+            NewFile();
+        return 0;
+    }
+
+    case WM_RBUTTONUP:
+    {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        const int tabIndex = HitTestTabBar(tabBar, point, nullptr);
+        if (tabIndex < 0)
+            return 0;
+
+        g_contextTabIndex = tabIndex;
+        POINT screenPoint = point;
+        ClientToScreen(tabBar, &screenPoint);
+
+        HMENU menu = CreatePopupMenu();
+        if (menu)
+        {
+            AppendMenuW(menu, MF_STRING, IDM_TAB_CLOSE,
+                UiText(L"\u5173\u95ED\u6807\u7B7E", L"Close Tab"));
+            AppendMenuW(menu, MF_STRING, IDM_TAB_CLOSE_OTHERS,
+                UiText(L"\u5173\u95ED\u5176\u4ED6\u6807\u7B7E", L"Close Other Tabs"));
+            AppendMenuW(menu, MF_STRING, IDM_TAB_CLOSE_ALL,
+                UiText(L"\u5173\u95ED\u6240\u6709\u6807\u7B7E", L"Close All Tabs"));
+            std::vector<std::unique_ptr<ThemedMenuItem>> menuItems;
+            ApplyPopupMenuTheme(menu, menuItems);
+            TrackPopupMenu(menu, TPM_RIGHTBUTTON, screenPoint.x, screenPoint.y, 0, hWnd, nullptr);
+            DestroyMenu(menu);
+        }
+        return 0;
+    }
+
+    default:
+        return DefWindowProc(tabBar, message, wParam, lParam);
+    }
+}
+
+DocumentEncoding GetActiveDocumentEncoding()
+{
+    if (!IsActiveTabValid())
+        return DocumentEncoding::Utf8;
+    return g_tabs[g_activeTabIndex].encoding;
+}
+
+int GetActiveDocumentEolMode()
+{
+    if (g_hSci)
+        return static_cast<int>(Sci(SCI_GETEOLMODE));
+    if (IsActiveTabValid())
+        return g_tabs[g_activeTabIndex].eolMode;
+    return SC_EOL_CRLF;
+}
+
+std::wstring BuildStatusSummary()
+{
+    if (!g_hSci)
+        return UiText(L"\u957F\u5EA6: 0    \u884C\u6570: 0    \u884C 1, \u5217 1, \u4F4D\u7F6E 0",
+            L"Length: 0    Lines: 0    Ln 1, Col 1, Pos 0");
+
+    const sptr_t length = Sci(SCI_GETLENGTH);
+    const sptr_t lineCount = Sci(SCI_GETLINECOUNT);
+    const sptr_t position = Sci(SCI_GETCURRENTPOS);
+    const sptr_t line = Sci(SCI_LINEFROMPOSITION, static_cast<uptr_t>(position), 0);
+    const sptr_t column = Sci(SCI_GETCOLUMN, static_cast<uptr_t>(position), 0);
+
+    if (g_appLanguage == AppLanguage::Chinese)
+    {
+        return std::wstring(L"\u957F\u5EA6: ") + std::to_wstring(length) +
+            L"    \u884C\u6570: " + std::to_wstring(lineCount) +
+            L"    \u884C " + std::to_wstring(line + 1) +
+            L", \u5217 " + std::to_wstring(column + 1) +
+            L", \u4F4D\u7F6E " + std::to_wstring(position);
+    }
+
+    return std::wstring(L"Length: ") + std::to_wstring(length) +
+        L"    Lines: " + std::to_wstring(lineCount) +
+        L"    Ln " + std::to_wstring(line + 1) +
+        L", Col " + std::to_wstring(column + 1) +
+        L", Pos " + std::to_wstring(position);
+}
+
+RECT GetStatusEolRect(HWND statusBar)
+{
+    RECT clientRect{};
+    GetClientRect(statusBar, &clientRect);
+    return RECT{ clientRect.right - 150, clientRect.top, clientRect.right - 8, clientRect.bottom };
+}
+
+RECT GetStatusEncodingRect(HWND statusBar)
+{
+    RECT eolRect = GetStatusEolRect(statusBar);
+    return RECT{ eolRect.left - 122, eolRect.top, eolRect.left - 8, eolRect.bottom };
+}
+
+StatusHitArea HitTestStatusBar(HWND statusBar, POINT point)
+{
+    RECT encodingRect = GetStatusEncodingRect(statusBar);
+    if (PtInRect(&encodingRect, point))
+        return StatusHitArea::Encoding;
+
+    RECT eolRect = GetStatusEolRect(statusBar);
+    if (PtInRect(&eolRect, point))
+        return StatusHitArea::EolFormat;
+
+    return StatusHitArea::None;
+}
+
+void DrawStatusItem(HDC hdc, const RECT& itemRect, const std::wstring& text)
+{
+    RECT textRect = itemRect;
+    textRect.left += 8;
+    textRect.right -= 8;
+    DrawTextW(hdc, text.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+}
+
+void DrawStatusSeparator(HDC hdc, int x, int top, int bottom)
+{
+    HPEN pen = CreatePen(PS_SOLID, 1, ThemeStatusLine());
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    MoveToEx(hdc, x, top + 5, nullptr);
+    LineTo(hdc, x, bottom - 5);
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+}
+
+void DrawStatusBar(HWND statusBar, HDC hdc)
+{
+    RECT clientRect{};
+    GetClientRect(statusBar, &clientRect);
+
+    HBRUSH background = CreateSolidBrush(ThemeStatusBack());
+    FillRect(hdc, &clientRect, background);
+    DeleteObject(background);
+
+    HPEN topPen = CreatePen(PS_SOLID, 1, ThemeStatusLine());
+    HGDIOBJ oldPen = SelectObject(hdc, topPen);
+    MoveToEx(hdc, clientRect.left, clientRect.top, nullptr);
+    LineTo(hdc, clientRect.right, clientRect.top);
+    SelectObject(hdc, oldPen);
+    DeleteObject(topPen);
+
+    HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    HGDIOBJ oldFont = SelectObject(hdc, font);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, ThemeStatusText());
+
+    RECT eolRect = GetStatusEolRect(statusBar);
+    RECT encodingRect = GetStatusEncodingRect(statusBar);
+    RECT summaryRect{ clientRect.left + 8, clientRect.top, encodingRect.left - 8, clientRect.bottom };
+
+    const std::wstring summary = BuildStatusSummary();
+    DrawTextW(hdc, summary.c_str(), -1, &summaryRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+    DrawStatusSeparator(hdc, encodingRect.left, clientRect.top, clientRect.bottom);
+    DrawStatusItem(hdc, encodingRect, EncodingDisplayName(GetActiveDocumentEncoding()));
+
+    DrawStatusSeparator(hdc, eolRect.left, clientRect.top, clientRect.bottom);
+    DrawStatusItem(hdc, eolRect, EolDisplayName(GetActiveDocumentEolMode()));
+
+    SelectObject(hdc, oldFont);
+}
+
+void ShowEncodingMenu(HWND statusBar, POINT point)
+{
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return;
+
+    AppendMenuW(menu, MF_STRING, IDM_ENCODING_UTF8, L"UTF-8");
+    AppendMenuW(menu, MF_STRING, IDM_ENCODING_UTF8_BOM, L"UTF-8 BOM");
+    AppendMenuW(menu, MF_STRING, IDM_ENCODING_ANSI, L"ANSI");
+    AppendMenuW(menu, MF_STRING, IDM_ENCODING_UTF16_LE, L"UTF-16 LE");
+    AppendMenuW(menu, MF_STRING, IDM_ENCODING_UTF16_BE, L"UTF-16 BE");
+    CheckMenuRadioItem(menu, IDM_ENCODING_UTF8, IDM_ENCODING_UTF16_BE,
+        CommandFromEncoding(GetActiveDocumentEncoding()), MF_BYCOMMAND);
+
+    ClientToScreen(statusBar, &point);
+    std::vector<std::unique_ptr<ThemedMenuItem>> menuItems;
+    ApplyPopupMenuTheme(menu, menuItems);
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, hWnd, nullptr);
+    DestroyMenu(menu);
+}
+
+void ShowEolMenu(HWND statusBar, POINT point)
+{
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return;
+
+    AppendMenuW(menu, MF_STRING, IDM_EOL_WINDOWS, L"Windows (CRLF)");
+    AppendMenuW(menu, MF_STRING, IDM_EOL_UNIX, L"Unix (LF)");
+    AppendMenuW(menu, MF_STRING, IDM_EOL_MAC, L"macOS (CR)");
+    CheckMenuRadioItem(menu, IDM_EOL_WINDOWS, IDM_EOL_MAC,
+        CommandFromEolMode(GetActiveDocumentEolMode()), MF_BYCOMMAND);
+
+    ClientToScreen(statusBar, &point);
+    std::vector<std::unique_ptr<ThemedMenuItem>> menuItems;
+    ApplyPopupMenuTheme(menu, menuItems);
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, hWnd, nullptr);
+    DestroyMenu(menu);
+}
+
+LRESULT CALLBACK StatusBarWndProc(HWND statusBar, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(statusBar, &ps);
+        DrawStatusBar(statusBar, hdc);
+        EndPaint(statusBar, &ps);
+        return 0;
+    }
+
+    case WM_SIZE:
+        InvalidateRect(statusBar, nullptr, TRUE);
+        return 0;
+
+    case WM_RBUTTONUP:
+    {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        const StatusHitArea hitArea = HitTestStatusBar(statusBar, point);
+        if (hitArea == StatusHitArea::Encoding)
+        {
+            ShowEncodingMenu(statusBar, point);
+        }
+        else if (hitArea == StatusHitArea::EolFormat)
+        {
+            ShowEolMenu(statusBar, point);
+        }
+        return 0;
+    }
+
+    default:
+        return DefWindowProc(statusBar, message, wParam, lParam);
+    }
+}
+
+// 关于对话框
+INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    UNREFERENCED_PARAMETER(lParam);
+    switch (message)
+    {
+    case WM_INITDIALOG:
+        return (INT_PTR)TRUE;
+
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
+        {
+            EndDialog(hDlg, LOWORD(wParam));
+            return (INT_PTR)TRUE;
+        }
+        break;
+    }
+    return (INT_PTR)FALSE;
+}

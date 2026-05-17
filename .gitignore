@@ -1,0 +1,50 @@
+# Visual Studio user/cache files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build outputs
+[Dd]ebug/
+[Rr]elease/
+[Xx]64/
+[Xx]86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+openedit/[Xx]64/
+openedit/[Xx]86/
+openedit/[Dd]ebug/
+openedit/[Rr]elease/
+
+# C/C++ intermediate and binary artifacts
+*.aps
+*.cache
+*.db
+*.dll
+*.exe
+*.exp
+*.ilk
+*.ipch
+*.iobj
+*.ipdb
+*.lib
+*.log
+*.obj
+*.opendb
+*.pdb
+*.pch
+*.recipe
+*.res
+*.tlog
+*.lastbuildstate
+*.unsuccessfulbuild
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+
+dist
+

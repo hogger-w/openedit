@@ -1,0 +1,232 @@
+//Microsoft Visual C++ 生成的资源脚本。
+//
+#include "src/Resource.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// 从 TEXTINCLUDE 资源生成。
+//
+#ifndef APSTUDIO_INVOKED
+#include "src/targetver.h"
+#endif
+#define APSTUDIO_HIDDEN_SYMBOLS
+#include "windows.h"
+#undef APSTUDIO_HIDDEN_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)
+LANGUAGE 4, 2
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// 图标
+//
+
+// ID 值最低的图标放在最前面，以确保应用程序图标
+// 在所有系统中保持一致。
+
+IDI_OPENEDIT       ICON         "assets\\oe.ico"
+IDI_SMALL          ICON         "assets\\oe.ico"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// 菜单
+//
+
+IDC_OPENEDIT MENU
+BEGIN
+    POPUP "文件(&F)"
+    BEGIN
+        MENUITEM "新建(&N)\tCtrl+N",          IDM_FILE_NEW
+        MENUITEM "打开文件(&O)\tCtrl+O",      IDM_FILE_OPEN
+        MENUITEM "打开文件夹(&F)\tCtrl+Shift+O", IDM_FILE_OPEN_FOLDER
+        MENUITEM SEPARATOR
+        MENUITEM "保存(&S)\tCtrl+S",          IDM_FILE_SAVE
+        MENUITEM "另存为(&A)\tCtrl+Shift+S",  IDM_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM "关闭文件夹(&C)",            IDM_FILE_CLOSE_FOLDER
+        MENUITEM SEPARATOR
+        MENUITEM "退出(&X)",                  IDM_EXIT
+    END
+    POPUP "编辑(&E)"
+    BEGIN
+        MENUITEM "撤销(&U)\tCtrl+Z",          IDM_EDIT_UNDO
+        MENUITEM "重做(&R)\tCtrl+Y",          IDM_EDIT_REDO
+        MENUITEM SEPARATOR
+        MENUITEM "剪切(&T)\tCtrl+X",          IDM_EDIT_CUT
+        MENUITEM "复制(&C)\tCtrl+C",          IDM_EDIT_COPY
+        MENUITEM "粘贴(&P)\tCtrl+V",          IDM_EDIT_PASTE
+        MENUITEM "删除(&D)\tDel",             IDM_EDIT_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM "全选(&A)\tCtrl+A",          IDM_EDIT_SELECT_ALL
+    END
+    POPUP "搜索(&S)"
+    BEGIN
+        MENUITEM "查找(&F)\tCtrl+F",          IDM_SEARCH_FIND
+        MENUITEM "查找下一个(&N)\tF3",        IDM_SEARCH_FIND_NEXT
+        MENUITEM "查找上一个(&P)\tShift+F3",  IDM_SEARCH_FIND_PREVIOUS
+        MENUITEM "替换(&R)\tCtrl+H",          IDM_SEARCH_REPLACE
+    END
+    POPUP "查看(&V)"
+    BEGIN
+        POPUP "查看符号(&S)"
+        BEGIN
+            MENUITEM "显示空格和制表符(&S)",  IDM_VIEW_SHOW_SPACE_TAB
+            MENUITEM "显示行尾符(&E)",        IDM_VIEW_SHOW_EOL
+            MENUITEM "显示所有字符(&A)",      IDM_VIEW_SHOW_ALL_CHARS
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "自动换行(&W)",              IDM_VIEW_WORD_WRAP
+        MENUITEM "显示/隐藏文件夹(&F)",       IDM_VIEW_TOGGLE_FOLDER
+    END
+    POPUP "语言(&L)"
+    BEGIN
+        MENUITEM "纯文本(&T)",              IDM_LANG_TEXT
+        MENUITEM SEPARATOR
+        MENUITEM "C/C++(&C)",               IDM_LANG_CPP
+        MENUITEM "C#(&S)",                  IDM_LANG_CSHARP
+        MENUITEM "Java(&J)",                IDM_LANG_JAVA
+        MENUITEM "JavaScript(&A)",          IDM_LANG_JAVASCRIPT
+        MENUITEM "TypeScript(&Y)",          IDM_LANG_TYPESCRIPT
+        MENUITEM "Python(&P)",              IDM_LANG_PYTHON
+        MENUITEM "HTML(&H)",                IDM_LANG_HTML
+        MENUITEM "XML(&X)",                 IDM_LANG_XML
+        MENUITEM "CSS(&C)",                 IDM_LANG_CSS
+        MENUITEM "JSON(&N)",                IDM_LANG_JSON
+        MENUITEM "SQL(&Q)",                 IDM_LANG_SQL
+        MENUITEM "Bash/Shell(&B)",          IDM_LANG_BASH
+        MENUITEM "PowerShell(&O)",          IDM_LANG_POWERSHELL
+        MENUITEM "Rust(&R)",                IDM_LANG_RUST
+        MENUITEM "Lua(&U)",                 IDM_LANG_LUA
+        MENUITEM "Ruby(&G)",                IDM_LANG_RUBY
+        MENUITEM "Markdown(&M)",            IDM_LANG_MARKDOWN
+    END
+    POPUP "设置(&T)"
+    BEGIN
+        MENUITEM "设置(&P)...",             IDM_SETTINGS_OPEN
+    END
+    POPUP "帮助(&H)"
+    BEGIN
+        MENUITEM "关于(&A) ...",           IDM_ABOUT
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// 快捷键
+//
+
+IDC_OPENEDIT ACCELERATORS
+BEGIN
+    "N",            IDM_FILE_NEW,              VIRTKEY, CONTROL
+    "O",            IDM_FILE_OPEN,             VIRTKEY, CONTROL
+    "O",            IDM_FILE_OPEN_FOLDER,      VIRTKEY, CONTROL, SHIFT
+    "S",            IDM_FILE_SAVE,             VIRTKEY, CONTROL
+    "S",            IDM_FILE_SAVE_AS,          VIRTKEY, CONTROL, SHIFT
+    "Z",            IDM_EDIT_UNDO,             VIRTKEY, CONTROL
+    "Y",            IDM_EDIT_REDO,             VIRTKEY, CONTROL
+    "X",            IDM_EDIT_CUT,              VIRTKEY, CONTROL
+    "C",            IDM_EDIT_COPY,             VIRTKEY, CONTROL
+    "V",            IDM_EDIT_PASTE,            VIRTKEY, CONTROL
+    VK_DELETE,      IDM_EDIT_DELETE,           VIRTKEY
+    "A",            IDM_EDIT_SELECT_ALL,       VIRTKEY, CONTROL
+    "F",            IDM_SEARCH_FIND,           VIRTKEY, CONTROL
+    "H",            IDM_SEARCH_REPLACE,        VIRTKEY, CONTROL
+    VK_F3,          IDM_SEARCH_FIND_NEXT,      VIRTKEY
+    VK_F3,          IDM_SEARCH_FIND_PREVIOUS,  VIRTKEY, SHIFT
+    "?",            IDM_ABOUT,              ASCII,  ALT
+    "/",            IDM_ABOUT,              ASCII,  ALT
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// 对话框
+//
+
+IDD_ABOUTBOX DIALOGEX 0, 0, 170, 62
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "关于 openedit"
+FONT 9, "MS Shell Dlg"
+BEGIN
+    ICON            IDI_OPENEDIT,IDC_STATIC,14,14,21,20
+    LTEXT           "openedit, 版本 1.0",IDC_STATIC,42,14,114,8,SS_NOPREFIX
+    LTEXT           "版权所有(c) 2025",IDC_STATIC,42,26,114,8
+    DEFPUSHBUTTON   "确定",IDOK,113,41,50,14,WS_GROUP
+END
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO
+BEGIN
+    IDD_ABOUTBOX, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 163
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 55
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+1 TEXTINCLUDE
+BEGIN
+    "resource.h\0"
+END
+
+2 TEXTINCLUDE
+BEGIN
+    "#ifndef APSTUDIO_INVOKED\r\n"
+    "#include ""src/targetver.h""\r\n"
+    "#endif\r\n"
+    "#define APSTUDIO_HIDDEN_SYMBOLS\r\n"
+    "#include ""windows.h""\r\n"
+    "#undef APSTUDIO_HIDDEN_SYMBOLS\r\n"
+    "\0"
+END
+
+3 TEXTINCLUDE
+BEGIN
+    "\r\n"
+    "\0"
+END
+
+#endif    // APSTUDIO_INVOKED
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// 字符串表
+//
+
+STRINGTABLE
+BEGIN
+   IDC_OPENEDIT   "OPENEDIT"
+   IDS_APP_TITLE       "openedit"
+END
+
+#endif
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// 从 TEXTINCLUDE 资源生成。
+//
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+
