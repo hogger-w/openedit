@@ -126,6 +126,7 @@ BEGIN
     "O",            IDM_FILE_OPEN_FOLDER,      VIRTKEY, CONTROL, SHIFT
     "S",            IDM_FILE_SAVE,             VIRTKEY, CONTROL
     "S",            IDM_FILE_SAVE_AS,          VIRTKEY, CONTROL, SHIFT
+    "W",            IDM_TAB_CLOSE,             VIRTKEY, CONTROL
     "Z",            IDM_EDIT_UNDO,             VIRTKEY, CONTROL
     "Y",            IDM_EDIT_REDO,             VIRTKEY, CONTROL
     "X",            IDM_EDIT_CUT,              VIRTKEY, CONTROL
@@ -153,7 +154,7 @@ CAPTION "关于 openedit"
 FONT 9, "MS Shell Dlg"
 BEGIN
     ICON            IDI_OPENEDIT,IDC_STATIC,14,14,21,20
-    LTEXT           "openedit, 版本 1.0",IDC_STATIC,42,14,114,8,SS_NOPREFIX
+    LTEXT           "openedit, 版本 1.0.1",IDC_STATIC,42,14,114,8,SS_NOPREFIX
     LTEXT           "版权所有(c) 2025",IDC_STATIC,42,26,114,8
     DEFPUSHBUTTON   "确定",IDOK,113,41,50,14,WS_GROUP
 END

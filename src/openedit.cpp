@@ -52,10 +52,15 @@ constexpr int kFolderPaneDividerWidth = 5;
 constexpr int kEditorMinWidth = 160;
 constexpr int kTabBarHeight = 26;
 constexpr int kStatusBarHeight = 24;
+constexpr int kStatusFolderToggleWidth = 34;
+constexpr int kStatusFolderToggleIconWidth = 17;
+constexpr int kStatusFolderToggleIconHeight = 14;
 constexpr int kTabWidth = 100;
 constexpr int kTabSaveIconSize = 12;
 constexpr int kTabCloseSize = 14;
 constexpr int kTabCornerRadius = 7;
+constexpr int kLineNumberMargin = 0;
+constexpr int kFoldMargin = 1;
 constexpr int kViewMenuIndex = 3;
 constexpr int kLanguageMenuIndex = 4;
 constexpr int kEditorFontSize = 14;
@@ -63,6 +68,9 @@ constexpr int kWordHighlightIndicator = 31;
 constexpr DWORD kFindOptionRegex = 0x10000000;
 constexpr DWORD kFindOptionMask = FR_DOWN | FR_MATCHCASE | FR_WHOLEWORD | kFindOptionRegex;
 constexpr WORD kSearchTextBufferLength = 256;
+constexpr BYTE kShortcutCtrl = 0x01;
+constexpr BYTE kShortcutShift = 0x02;
+constexpr BYTE kShortcutAlt = 0x04;
 constexpr int HTFOLDERTOGGLE = 100;
 constexpr COLORREF kFolderPaneBackColor = RGB(236, 242, 248);
 constexpr COLORREF kFolderPaneTextColor = RGB(32, 45, 58);
@@ -123,6 +131,14 @@ constexpr int IDC_SETTINGS_THEME_DARK = 1005;
 constexpr int IDC_SETTINGS_LANGUAGE_CHINESE = 1006;
 constexpr int IDC_SETTINGS_LANGUAGE_ENGLISH = 1007;
 constexpr int IDC_SETTINGS_RESTORE_PREVIOUS_FILES = 1008;
+constexpr int IDC_SETTINGS_TAB_GENERAL = 1009;
+constexpr int IDC_SETTINGS_TAB_SHORTCUTS = 1010;
+constexpr int IDC_SETTINGS_GENERAL_THEME_LABEL = 1011;
+constexpr int IDC_SETTINGS_GENERAL_LANGUAGE_LABEL = 1012;
+constexpr int IDC_SETTINGS_GENERAL_STARTUP_LABEL = 1013;
+constexpr int IDC_SETTINGS_SHORTCUT_RESET = 1014;
+constexpr int IDC_SETTINGS_SHORTCUT_LABEL_BASE = 1100;
+constexpr int IDC_SETTINGS_SHORTCUT_HOTKEY_BASE = 1200;
 constexpr int kFolderSplitterPreviewWindowWidth = 5;
 constexpr COLORREF kFolderSplitterPreviewBackColor = RGB(255, 0, 255);
 constexpr COLORREF kFolderSplitterPreviewLineColor = RGB(180, 180, 180);
@@ -160,12 +176,14 @@ HWND g_hFindReplaceDialog = nullptr;
 HWND g_hSettingsWindow = nullptr;
 HWND g_hAboutWindow = nullptr;
 HWND g_hFolderSplitterPreview = nullptr;
+HACCEL g_hAccelTable = nullptr;
 HMENU g_hSettingsMenu = nullptr;
 HIMAGELIST g_hFolderTreeImageList = nullptr;
 WNDPROC g_originalFolderTreeProc = nullptr;
 std::unique_ptr<OpenEditFindWindow> g_findWindow;
 HBRUSH g_hPopupBackBrush = nullptr;
 HBRUSH g_hPopupSurfaceBrush = nullptr;
+HBRUSH g_hPopupInputBrush = nullptr;
 HBRUSH g_hMenuBackBrush = nullptr;
 
 SciFnDirect g_pSciFn = nullptr; // Scintilla官方直接调用函数
@@ -184,6 +202,7 @@ bool g_restoreFolderInSession = false;
 AppTheme g_settingsDraftTheme = AppTheme::Dark;
 AppLanguage g_settingsDraftLanguage = AppLanguage::Chinese;
 bool g_settingsDraftRestorePreviousFiles = true;
+int g_settingsActiveTab = 0;
 bool g_showSpaceAndTab = false;
 bool g_showEndOfLine = false;
 bool g_wordWrapEnabled = true;
@@ -209,6 +228,39 @@ struct ThemedMenuItem
 
 std::vector<std::unique_ptr<ThemedMenuItem>> g_mainMenuItems;
 
+struct ShortcutBinding
+{
+    int commandId;
+    WORD key;
+    BYTE modifiers;
+    WORD defaultKey;
+    BYTE defaultModifiers;
+};
+
+constexpr size_t kShortcutBindingCount = 17;
+
+std::array<ShortcutBinding, kShortcutBindingCount> g_shortcutBindings = { {
+    { IDM_FILE_NEW, 'N', kShortcutCtrl, 'N', kShortcutCtrl },
+    { IDM_FILE_OPEN, 'O', kShortcutCtrl, 'O', kShortcutCtrl },
+    { IDM_FILE_OPEN_FOLDER, 'O', kShortcutCtrl | kShortcutShift, 'O', kShortcutCtrl | kShortcutShift },
+    { IDM_FILE_SAVE, 'S', kShortcutCtrl, 'S', kShortcutCtrl },
+    { IDM_FILE_SAVE_AS, 'S', kShortcutCtrl | kShortcutShift, 'S', kShortcutCtrl | kShortcutShift },
+    { IDM_TAB_CLOSE, 'W', kShortcutCtrl, 'W', kShortcutCtrl },
+    { IDM_EDIT_UNDO, 'Z', kShortcutCtrl, 'Z', kShortcutCtrl },
+    { IDM_EDIT_REDO, 'Y', kShortcutCtrl, 'Y', kShortcutCtrl },
+    { IDM_EDIT_CUT, 'X', kShortcutCtrl, 'X', kShortcutCtrl },
+    { IDM_EDIT_COPY, 'C', kShortcutCtrl, 'C', kShortcutCtrl },
+    { IDM_EDIT_PASTE, 'V', kShortcutCtrl, 'V', kShortcutCtrl },
+    { IDM_EDIT_DELETE, VK_DELETE, 0, VK_DELETE, 0 },
+    { IDM_EDIT_SELECT_ALL, 'A', kShortcutCtrl, 'A', kShortcutCtrl },
+    { IDM_SEARCH_FIND, 'F', kShortcutCtrl, 'F', kShortcutCtrl },
+    { IDM_SEARCH_FIND_NEXT, VK_F3, 0, VK_F3, 0 },
+    { IDM_SEARCH_FIND_PREVIOUS, VK_F3, kShortcutShift, VK_F3, kShortcutShift },
+    { IDM_SEARCH_REPLACE, 'H', kShortcutCtrl, 'H', kShortcutCtrl },
+} };
+
+std::array<ShortcutBinding, kShortcutBindingCount> g_settingsDraftShortcuts{};
+
 enum class DocumentEncoding
 {
     Utf8,
@@ -221,6 +273,7 @@ enum class DocumentEncoding
 enum class StatusHitArea
 {
     None,
+    FolderToggle,
     Encoding,
     EolFormat,
 };
@@ -413,6 +466,218 @@ const wchar_t* UiText(const wchar_t* chinese, const wchar_t* english)
     return g_appLanguage == AppLanguage::Chinese ? chinese : english;
 }
 
+ShortcutBinding* FindShortcutBinding(int commandId)
+{
+    for (ShortcutBinding& shortcut : g_shortcutBindings)
+    {
+        if (shortcut.commandId == commandId)
+            return &shortcut;
+    }
+    return nullptr;
+}
+
+const ShortcutBinding* FindShortcutBinding(int commandId, const std::array<ShortcutBinding, kShortcutBindingCount>& shortcuts)
+{
+    for (const ShortcutBinding& shortcut : shortcuts)
+    {
+        if (shortcut.commandId == commandId)
+            return &shortcut;
+    }
+    return nullptr;
+}
+
+std::wstring ShortcutCommandName(int commandId)
+{
+    switch (commandId)
+    {
+    case IDM_FILE_NEW:
+        return UiText(L"\u65B0\u5EFA", L"New");
+    case IDM_FILE_OPEN:
+        return UiText(L"\u6253\u5F00\u6587\u4EF6", L"Open File");
+    case IDM_FILE_OPEN_FOLDER:
+        return UiText(L"\u6253\u5F00\u6587\u4EF6\u5939", L"Open Folder");
+    case IDM_FILE_SAVE:
+        return UiText(L"\u4FDD\u5B58", L"Save");
+    case IDM_FILE_SAVE_AS:
+        return UiText(L"\u53E6\u5B58\u4E3A", L"Save As");
+    case IDM_TAB_CLOSE:
+        return UiText(L"\u5173\u95ED\u5F53\u524D\u6807\u7B7E", L"Close Current Tab");
+    case IDM_EDIT_UNDO:
+        return UiText(L"\u64A4\u9500", L"Undo");
+    case IDM_EDIT_REDO:
+        return UiText(L"\u91CD\u505A", L"Redo");
+    case IDM_EDIT_CUT:
+        return UiText(L"\u526A\u5207", L"Cut");
+    case IDM_EDIT_COPY:
+        return UiText(L"\u590D\u5236", L"Copy");
+    case IDM_EDIT_PASTE:
+        return UiText(L"\u7C98\u8D34", L"Paste");
+    case IDM_EDIT_DELETE:
+        return UiText(L"\u5220\u9664", L"Delete");
+    case IDM_EDIT_SELECT_ALL:
+        return UiText(L"\u5168\u9009", L"Select All");
+    case IDM_SEARCH_FIND:
+        return UiText(L"\u67E5\u627E", L"Find");
+    case IDM_SEARCH_FIND_NEXT:
+        return UiText(L"\u67E5\u627E\u4E0B\u4E00\u4E2A", L"Find Next");
+    case IDM_SEARCH_FIND_PREVIOUS:
+        return UiText(L"\u67E5\u627E\u4E0A\u4E00\u4E2A", L"Find Previous");
+    case IDM_SEARCH_REPLACE:
+        return UiText(L"\u66FF\u6362", L"Replace");
+    default:
+        return L"";
+    }
+}
+
+std::wstring ShortcutKeyName(WORD key)
+{
+    if (key >= 'A' && key <= 'Z')
+        return std::wstring(1, static_cast<wchar_t>(key));
+    if (key >= '0' && key <= '9')
+        return std::wstring(1, static_cast<wchar_t>(key));
+    if (key >= VK_F1 && key <= VK_F24)
+        return L"F" + std::to_wstring((key - VK_F1) + 1);
+
+    switch (key)
+    {
+    case VK_DELETE:
+        return L"Del";
+    case VK_INSERT:
+        return L"Ins";
+    case VK_HOME:
+        return L"Home";
+    case VK_END:
+        return L"End";
+    case VK_PRIOR:
+        return L"Page Up";
+    case VK_NEXT:
+        return L"Page Down";
+    case VK_LEFT:
+        return L"Left";
+    case VK_RIGHT:
+        return L"Right";
+    case VK_UP:
+        return L"Up";
+    case VK_DOWN:
+        return L"Down";
+    case VK_BACK:
+        return L"Backspace";
+    case VK_TAB:
+        return L"Tab";
+    case VK_RETURN:
+        return L"Enter";
+    case VK_ESCAPE:
+        return L"Esc";
+    case VK_SPACE:
+        return L"Space";
+    default:
+        break;
+    }
+
+    const UINT scanCode = MapVirtualKeyW(key, MAPVK_VK_TO_VSC);
+    wchar_t name[64]{};
+    if (scanCode != 0 && GetKeyNameTextW(static_cast<LONG>(scanCode << 16), name,
+        static_cast<int>(sizeof(name) / sizeof(name[0]))) > 0)
+        return name;
+
+    return std::wstring(L"VK ") + std::to_wstring(key);
+}
+
+std::wstring ShortcutText(BYTE modifiers, WORD key)
+{
+    if (key == 0)
+        return L"";
+
+    std::wstring text;
+    if (modifiers & kShortcutCtrl)
+        text += L"Ctrl+";
+    if (modifiers & kShortcutShift)
+        text += L"Shift+";
+    if (modifiers & kShortcutAlt)
+        text += L"Alt+";
+    text += ShortcutKeyName(key);
+    return text;
+}
+
+std::wstring ShortcutTextForCommand(int commandId)
+{
+    const ShortcutBinding* shortcut = FindShortcutBinding(commandId, g_shortcutBindings);
+    return shortcut ? ShortcutText(shortcut->modifiers, shortcut->key) : L"";
+}
+
+std::wstring MenuLabelWithShortcut(const wchar_t* chinese, const wchar_t* english, int commandId)
+{
+    std::wstring label = UiText(chinese, english);
+    const std::wstring shortcut = ShortcutTextForCommand(commandId);
+    if (!shortcut.empty())
+        label += L"\t" + shortcut;
+    return label;
+}
+
+BYTE AcceleratorFlagsFromShortcut(BYTE modifiers)
+{
+    BYTE flags = FVIRTKEY;
+    if (modifiers & kShortcutCtrl)
+        flags |= FCONTROL;
+    if (modifiers & kShortcutShift)
+        flags |= FSHIFT;
+    if (modifiers & kShortcutAlt)
+        flags |= FALT;
+    return flags;
+}
+
+WORD HotKeyControlModifiers(BYTE modifiers)
+{
+    WORD hotKeyModifiers = 0;
+    if (modifiers & kShortcutCtrl)
+        hotKeyModifiers |= HOTKEYF_CONTROL;
+    if (modifiers & kShortcutShift)
+        hotKeyModifiers |= HOTKEYF_SHIFT;
+    if (modifiers & kShortcutAlt)
+        hotKeyModifiers |= HOTKEYF_ALT;
+    return hotKeyModifiers;
+}
+
+BYTE ShortcutModifiersFromHotKey(WORD hotKey)
+{
+    const BYTE hotKeyModifiers = HIBYTE(hotKey);
+    BYTE modifiers = 0;
+    if (hotKeyModifiers & HOTKEYF_CONTROL)
+        modifiers |= kShortcutCtrl;
+    if (hotKeyModifiers & HOTKEYF_SHIFT)
+        modifiers |= kShortcutShift;
+    if (hotKeyModifiers & HOTKEYF_ALT)
+        modifiers |= kShortcutAlt;
+    return modifiers;
+}
+
+void RebuildAcceleratorTable()
+{
+    std::vector<ACCEL> accelerators;
+    accelerators.reserve(g_shortcutBindings.size() + 2);
+    for (const ShortcutBinding& shortcut : g_shortcutBindings)
+    {
+        if (shortcut.key == 0)
+            continue;
+        accelerators.push_back(ACCEL{
+            AcceleratorFlagsFromShortcut(shortcut.modifiers),
+            shortcut.key,
+            static_cast<WORD>(shortcut.commandId)
+        });
+    }
+
+    accelerators.push_back(ACCEL{ FALT, static_cast<WORD>('?'), IDM_ABOUT });
+    accelerators.push_back(ACCEL{ FALT, static_cast<WORD>('/'), IDM_ABOUT });
+
+    HACCEL newTable = CreateAcceleratorTableW(accelerators.data(), static_cast<int>(accelerators.size()));
+    if (!newTable)
+        return;
+
+    if (g_hAccelTable)
+        DestroyAcceleratorTable(g_hAccelTable);
+    g_hAccelTable = newTable;
+}
+
 COLORREF ThemeEditorBack() { return IsDarkTheme() ? kVsCodeEditorBack : kVsCodeLightEditorBack; }
 COLORREF ThemeCurrentLineBack() { return IsDarkTheme() ? kVsCodeCurrentLineBack : kVsCodeLightCurrentLineBack; }
 COLORREF ThemeEditorText() { return IsDarkTheme() ? kVsCodeText : kVsCodeLightText; }
@@ -456,6 +721,7 @@ COLORREF ThemePopupSurface() { return IsDarkTheme() ? RGB(52, 52, 56) : RGB(255,
 COLORREF ThemePopupText() { return IsDarkTheme() ? RGB(232, 232, 232) : RGB(31, 41, 55); }
 COLORREF ThemePopupMutedText() { return IsDarkTheme() ? RGB(170, 170, 170) : RGB(91, 101, 113); }
 COLORREF ThemePopupBorder() { return IsDarkTheme() ? RGB(82, 82, 88) : RGB(200, 210, 222); }
+COLORREF ThemePopupInputBack() { return IsDarkTheme() ? RGB(38, 38, 42) : RGB(255, 255, 255); }
 COLORREF ThemePopupButtonBack(bool pressed) { return pressed ? (IsDarkTheme() ? RGB(70, 70, 76) : RGB(221, 232, 246)) : (IsDarkTheme() ? RGB(58, 58, 63) : RGB(242, 246, 251)); }
 COLORREF ThemeAccent() { return RGB(0, 120, 215); }
 COLORREF ThemeMenuBack() { return IsDarkTheme() ? RGB(37, 37, 38) : RGB(248, 250, 252); }
@@ -463,6 +729,11 @@ COLORREF ThemeMenuHoverBack() { return IsDarkTheme() ? RGB(62, 62, 66) : RGB(229
 COLORREF ThemeMenuText() { return IsDarkTheme() ? RGB(232, 232, 232) : RGB(31, 41, 55); }
 COLORREF ThemeMenuMutedText() { return IsDarkTheme() ? RGB(150, 150, 150) : RGB(120, 128, 140); }
 COLORREF ThemeMenuBorder() { return IsDarkTheme() ? RGB(74, 74, 78) : RGB(205, 213, 224); }
+
+sptr_t ScintillaColourAlpha(COLORREF color)
+{
+    return static_cast<sptr_t>(color | 0xff000000u);
+}
 
 using SetPreferredAppModeFn = int(WINAPI*)(int appMode);
 using FlushMenuThemesFn = void(WINAPI*)();
@@ -817,9 +1088,9 @@ void EnsureEditSearchCommands(HMENU editMenu)
 
     AppendMenuW(editMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(editMenu, MF_STRING, IDM_SEARCH_FIND,
-        UiText(L"\u67E5\u627E(&F)\tCtrl+F", L"Find(&F)\tCtrl+F"));
+        MenuLabelWithShortcut(L"\u67E5\u627E(&F)", L"Find(&F)", IDM_SEARCH_FIND).c_str());
     AppendMenuW(editMenu, MF_STRING, IDM_SEARCH_REPLACE,
-        UiText(L"\u66FF\u6362(&R)\tCtrl+H", L"Replace(&R)\tCtrl+H"));
+        MenuLabelWithShortcut(L"\u66FF\u6362(&R)", L"Replace(&R)", IDM_SEARCH_REPLACE).c_str());
 }
 
 int FindSubMenuIndex(HMENU menu, HMENU submenu)
@@ -916,31 +1187,31 @@ void UpdateMainMenuText()
     SetTopMenuText(menu, helpIndex, UiText(L"\u5E2E\u52A9(&H)", L"Help(&H)"));
 
     HMENU fileMenu = GetSubMenu(menu, 0);
-    SetMenuText(fileMenu, IDM_FILE_NEW, UiText(L"\u65B0\u5EFA(&N)\tCtrl+N", L"New(&N)\tCtrl+N"));
-    SetMenuText(fileMenu, IDM_FILE_OPEN, UiText(L"\u6253\u5F00\u6587\u4EF6(&O)\tCtrl+O", L"Open File(&O)\tCtrl+O"));
-    SetMenuText(fileMenu, IDM_FILE_OPEN_FOLDER, UiText(L"\u6253\u5F00\u6587\u4EF6\u5939(&F)\tCtrl+Shift+O", L"Open Folder(&F)\tCtrl+Shift+O"));
-    SetMenuText(fileMenu, IDM_FILE_SAVE, UiText(L"\u4FDD\u5B58(&S)\tCtrl+S", L"Save(&S)\tCtrl+S"));
-    SetMenuText(fileMenu, IDM_FILE_SAVE_AS, UiText(L"\u53E6\u5B58\u4E3A(&A)\tCtrl+Shift+S", L"Save As(&A)\tCtrl+Shift+S"));
+    SetMenuText(fileMenu, IDM_FILE_NEW, MenuLabelWithShortcut(L"\u65B0\u5EFA(&N)", L"New(&N)", IDM_FILE_NEW).c_str());
+    SetMenuText(fileMenu, IDM_FILE_OPEN, MenuLabelWithShortcut(L"\u6253\u5F00\u6587\u4EF6(&O)", L"Open File(&O)", IDM_FILE_OPEN).c_str());
+    SetMenuText(fileMenu, IDM_FILE_OPEN_FOLDER, MenuLabelWithShortcut(L"\u6253\u5F00\u6587\u4EF6\u5939(&F)", L"Open Folder(&F)", IDM_FILE_OPEN_FOLDER).c_str());
+    SetMenuText(fileMenu, IDM_FILE_SAVE, MenuLabelWithShortcut(L"\u4FDD\u5B58(&S)", L"Save(&S)", IDM_FILE_SAVE).c_str());
+    SetMenuText(fileMenu, IDM_FILE_SAVE_AS, MenuLabelWithShortcut(L"\u53E6\u5B58\u4E3A(&A)", L"Save As(&A)", IDM_FILE_SAVE_AS).c_str());
     SetMenuText(fileMenu, IDM_FILE_CLOSE_FOLDER, UiText(L"\u5173\u95ED\u6587\u4EF6\u5939(&C)", L"Close Folder(&C)"));
     SetMenuText(fileMenu, IDM_EXIT, UiText(L"\u9000\u51FA(&X)", L"Exit(&X)"));
 
     HMENU editMenu = GetSubMenu(menu, 1);
     EnsureEditSearchCommands(editMenu);
-    SetMenuText(editMenu, IDM_EDIT_UNDO, UiText(L"\u64A4\u9500(&U)\tCtrl+Z", L"Undo(&U)\tCtrl+Z"));
-    SetMenuText(editMenu, IDM_EDIT_REDO, UiText(L"\u91CD\u505A(&R)\tCtrl+Y", L"Redo(&R)\tCtrl+Y"));
-    SetMenuText(editMenu, IDM_EDIT_CUT, UiText(L"\u526A\u5207(&T)\tCtrl+X", L"Cut(&T)\tCtrl+X"));
-    SetMenuText(editMenu, IDM_EDIT_COPY, UiText(L"\u590D\u5236(&C)\tCtrl+C", L"Copy(&C)\tCtrl+C"));
-    SetMenuText(editMenu, IDM_EDIT_PASTE, UiText(L"\u7C98\u8D34(&P)\tCtrl+V", L"Paste(&P)\tCtrl+V"));
-    SetMenuText(editMenu, IDM_EDIT_DELETE, UiText(L"\u5220\u9664(&D)\tDel", L"Delete(&D)\tDel"));
-    SetMenuText(editMenu, IDM_EDIT_SELECT_ALL, UiText(L"\u5168\u9009(&A)\tCtrl+A", L"Select All(&A)\tCtrl+A"));
-    SetMenuText(editMenu, IDM_SEARCH_FIND, UiText(L"\u67E5\u627E(&F)\tCtrl+F", L"Find(&F)\tCtrl+F"));
-    SetMenuText(editMenu, IDM_SEARCH_REPLACE, UiText(L"\u66FF\u6362(&R)\tCtrl+H", L"Replace(&R)\tCtrl+H"));
+    SetMenuText(editMenu, IDM_EDIT_UNDO, MenuLabelWithShortcut(L"\u64A4\u9500(&U)", L"Undo(&U)", IDM_EDIT_UNDO).c_str());
+    SetMenuText(editMenu, IDM_EDIT_REDO, MenuLabelWithShortcut(L"\u91CD\u505A(&R)", L"Redo(&R)", IDM_EDIT_REDO).c_str());
+    SetMenuText(editMenu, IDM_EDIT_CUT, MenuLabelWithShortcut(L"\u526A\u5207(&T)", L"Cut(&T)", IDM_EDIT_CUT).c_str());
+    SetMenuText(editMenu, IDM_EDIT_COPY, MenuLabelWithShortcut(L"\u590D\u5236(&C)", L"Copy(&C)", IDM_EDIT_COPY).c_str());
+    SetMenuText(editMenu, IDM_EDIT_PASTE, MenuLabelWithShortcut(L"\u7C98\u8D34(&P)", L"Paste(&P)", IDM_EDIT_PASTE).c_str());
+    SetMenuText(editMenu, IDM_EDIT_DELETE, MenuLabelWithShortcut(L"\u5220\u9664(&D)", L"Delete(&D)", IDM_EDIT_DELETE).c_str());
+    SetMenuText(editMenu, IDM_EDIT_SELECT_ALL, MenuLabelWithShortcut(L"\u5168\u9009(&A)", L"Select All(&A)", IDM_EDIT_SELECT_ALL).c_str());
+    SetMenuText(editMenu, IDM_SEARCH_FIND, MenuLabelWithShortcut(L"\u67E5\u627E(&F)", L"Find(&F)", IDM_SEARCH_FIND).c_str());
+    SetMenuText(editMenu, IDM_SEARCH_REPLACE, MenuLabelWithShortcut(L"\u66FF\u6362(&R)", L"Replace(&R)", IDM_SEARCH_REPLACE).c_str());
 
     HMENU searchMenu = GetSubMenu(menu, 2);
-    SetMenuText(searchMenu, IDM_SEARCH_FIND, UiText(L"\u67E5\u627E(&F)\tCtrl+F", L"Find(&F)\tCtrl+F"));
-    SetMenuText(searchMenu, IDM_SEARCH_FIND_NEXT, UiText(L"\u67E5\u627E\u4E0B\u4E00\u4E2A(&N)\tF3", L"Find Next(&N)\tF3"));
-    SetMenuText(searchMenu, IDM_SEARCH_FIND_PREVIOUS, UiText(L"\u67E5\u627E\u4E0A\u4E00\u4E2A(&P)\tShift+F3", L"Find Previous(&P)\tShift+F3"));
-    SetMenuText(searchMenu, IDM_SEARCH_REPLACE, UiText(L"\u66FF\u6362(&R)\tCtrl+H", L"Replace(&R)\tCtrl+H"));
+    SetMenuText(searchMenu, IDM_SEARCH_FIND, MenuLabelWithShortcut(L"\u67E5\u627E(&F)", L"Find(&F)", IDM_SEARCH_FIND).c_str());
+    SetMenuText(searchMenu, IDM_SEARCH_FIND_NEXT, MenuLabelWithShortcut(L"\u67E5\u627E\u4E0B\u4E00\u4E2A(&N)", L"Find Next(&N)", IDM_SEARCH_FIND_NEXT).c_str());
+    SetMenuText(searchMenu, IDM_SEARCH_FIND_PREVIOUS, MenuLabelWithShortcut(L"\u67E5\u627E\u4E0A\u4E00\u4E2A(&P)", L"Find Previous(&P)", IDM_SEARCH_FIND_PREVIOUS).c_str());
+    SetMenuText(searchMenu, IDM_SEARCH_REPLACE, MenuLabelWithShortcut(L"\u66FF\u6362(&R)", L"Replace(&R)", IDM_SEARCH_REPLACE).c_str());
 
     HMENU viewMenu = GetSubMenu(menu, kViewMenuIndex);
     HMENU symbolMenu = viewMenu ? GetSubMenu(viewMenu, 0) : nullptr;
@@ -1059,6 +1330,62 @@ void ClearKeywordLists()
         Sci(SCI_SETKEYWORDS, index, reinterpret_cast<sptr_t>(""));
 }
 
+void SetEditorProperty(const char* name, const char* value)
+{
+    Sci(SCI_SETPROPERTY, reinterpret_cast<uptr_t>(name), reinterpret_cast<sptr_t>(value));
+}
+
+bool SupportsCodeFolding(SyntaxFamily family)
+{
+    return family != SyntaxFamily::Plain;
+}
+
+void ConfigureFoldMarkers()
+{
+    const COLORREF markerLine = IsDarkTheme() ? RGB(128, 128, 128) : RGB(90, 105, 122);
+    const COLORREF markerFill = ThemeEditorBack();
+
+    Sci(SCI_MARKERDEFINE, SC_MARKNUM_FOLDEROPEN, SC_MARK_BOXMINUS);
+    Sci(SCI_MARKERDEFINE, SC_MARKNUM_FOLDER, SC_MARK_BOXPLUS);
+    Sci(SCI_MARKERDEFINE, SC_MARKNUM_FOLDERSUB, SC_MARK_VLINE);
+    Sci(SCI_MARKERDEFINE, SC_MARKNUM_FOLDERTAIL, SC_MARK_LCORNER);
+    Sci(SCI_MARKERDEFINE, SC_MARKNUM_FOLDEREND, SC_MARK_BOXPLUSCONNECTED);
+    Sci(SCI_MARKERDEFINE, SC_MARKNUM_FOLDEROPENMID, SC_MARK_BOXMINUSCONNECTED);
+    Sci(SCI_MARKERDEFINE, SC_MARKNUM_FOLDERMIDTAIL, SC_MARK_TCORNER);
+
+    for (int marker = SC_MARKNUM_FOLDEREND; marker <= SC_MARKNUM_FOLDEROPEN; ++marker)
+    {
+        Sci(SCI_MARKERSETFORE, marker, markerLine);
+        Sci(SCI_MARKERSETBACK, marker, markerFill);
+        Sci(SCI_MARKERSETBACKSELECTED, marker, markerFill);
+        Sci(SCI_MARKERSETALPHA, marker, SC_ALPHA_OPAQUE);
+        Sci(SCI_MARKERSETSTROKEWIDTH, marker, 100);
+    }
+}
+
+void ConfigureCodeFolding(SyntaxFamily family)
+{
+    const bool enabled = SupportsCodeFolding(family);
+    SetEditorProperty("fold", enabled ? "1" : "0");
+    SetEditorProperty("fold.compact", enabled ? "1" : "0");
+    SetEditorProperty("fold.html", enabled ? "1" : "0");
+    SetEditorProperty("fold.comment", enabled ? "1" : "0");
+
+    ConfigureFoldMarkers();
+    Sci(SCI_SETMARGINTYPEN, kFoldMargin, SC_MARGIN_SYMBOL);
+    Sci(SCI_SETMARGINMASKN, kFoldMargin, SC_MASK_FOLDERS);
+    Sci(SCI_SETMARGINWIDTHN, kFoldMargin, enabled ? 16 : 0);
+    Sci(SCI_SETMARGINSENSITIVEN, kFoldMargin, enabled ? TRUE : FALSE);
+    Sci(SCI_SETMARGINCURSORN, kFoldMargin, SC_CURSORARROW);
+    Sci(SCI_SETMARGINBACKN, kFoldMargin, ThemeEditorBack());
+    Sci(SCI_SETFOLDMARGINCOLOUR, TRUE, ThemeEditorBack());
+    Sci(SCI_SETFOLDMARGINHICOLOUR, TRUE, ThemeEditorBack());
+    Sci(SCI_SETELEMENTCOLOUR, SC_ELEMENT_FOLD_LINE,
+        ScintillaColourAlpha(IsDarkTheme() ? RGB(82, 82, 88) : RGB(200, 210, 222)));
+    Sci(SCI_SETFOLDFLAGS, enabled ? SC_FOLDFLAG_LINEAFTER_CONTRACTED : SC_FOLDFLAG_NONE);
+    Sci(SCI_SETAUTOMATICFOLD, enabled ? (SC_AUTOMATICFOLD_SHOW | SC_AUTOMATICFOLD_CHANGE) : SC_AUTOMATICFOLD_NONE);
+}
+
 void ApplyBaseEditorStyles()
 {
     Sci(SCI_STYLESETBACK, STYLE_DEFAULT, ThemeEditorBack());
@@ -1081,9 +1408,9 @@ void ApplyBaseEditorStyles()
     Sci(SCI_STYLESETBOLD, STYLE_BRACELIGHT, 1);
     Sci(SCI_STYLESETBACK, STYLE_BRACEBAD, ThemeEditorBack());
     Sci(SCI_STYLESETFORE, STYLE_BRACEBAD, ThemeError());
-    Sci(SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER);
-    Sci(SCI_SETMARGINWIDTHN, 0, 56);
-    Sci(SCI_SETMARGINBACKN, 0, ThemeEditorBack());
+    Sci(SCI_SETMARGINTYPEN, kLineNumberMargin, SC_MARGIN_NUMBER);
+    Sci(SCI_SETMARGINWIDTHN, kLineNumberMargin, 56);
+    Sci(SCI_SETMARGINBACKN, kLineNumberMargin, ThemeEditorBack());
     Sci(SCI_SETTABWIDTH, 4, 0);
     Sci(SCI_SETINDENT, 4, 0);
     Sci(SCI_SETUSETABS, 0, 0);
@@ -1364,6 +1691,7 @@ void ApplyLanguage(int commandId)
     }
 
     ApplySyntaxFamilyStyles(language->family);
+    ConfigureCodeFolding(language->family);
     Sci(SCI_COLOURISE, 0, -1);
 
     g_currentLanguageCommand = commandId;
@@ -1379,13 +1707,29 @@ void InitScintillaEditor()
     UpdateViewMenuCheck();
 }
 
+void HandleEditorMarginClick(const SCNotification* notification)
+{
+    if (!notification || notification->margin != kFoldMargin)
+        return;
+
+    const sptr_t position = (std::max)(static_cast<sptr_t>(notification->position), static_cast<sptr_t>(0));
+    const sptr_t line = Sci(SCI_LINEFROMPOSITION, static_cast<uptr_t>(position), 0);
+    const sptr_t foldLevel = Sci(SCI_GETFOLDLEVEL, static_cast<uptr_t>(line), 0);
+    if ((foldLevel & SC_FOLDLEVELHEADERFLAG) == 0)
+        return;
+
+    Sci(SCI_TOGGLEFOLD, static_cast<uptr_t>(line), 0);
+}
+
 void ApplyAppTheme()
 {
     DeleteObject(g_hPopupBackBrush);
     DeleteObject(g_hPopupSurfaceBrush);
+    DeleteObject(g_hPopupInputBrush);
     DeleteObject(g_hMenuBackBrush);
     g_hPopupBackBrush = nullptr;
     g_hPopupSurfaceBrush = nullptr;
+    g_hPopupInputBrush = nullptr;
     g_hMenuBackBrush = nullptr;
 
     ApplyWindowChromeTheme(hWnd);
@@ -2718,6 +3062,7 @@ void SetFolderPaneVisible(bool visible)
     g_folderPaneVisible = visible;
     LayoutChildWindows();
     RedrawFolderToggleButton();
+    InvalidateStatusBar();
     UpdateViewMenuCheck();
 }
 
@@ -3320,6 +3665,21 @@ void LoadAppSettings()
 
         if (line.rfind("restorePreviousFiles=", 0) == 0)
             g_restorePreviousFilesOnStartup = ParseSessionInt(line.substr(21), 1) != 0;
+        else if (line.rfind("shortcut.", 0) == 0)
+        {
+            const size_t equals = line.find('=');
+            const size_t comma = line.find(',', equals == std::string::npos ? 0 : equals + 1);
+            if (equals != std::string::npos && comma != std::string::npos)
+            {
+                const int commandId = ParseSessionInt(line.substr(9, equals - 9), 0);
+                ShortcutBinding* shortcut = FindShortcutBinding(commandId);
+                if (shortcut)
+                {
+                    shortcut->modifiers = static_cast<BYTE>(ParseSessionInt(line.substr(equals + 1, comma - equals - 1), shortcut->defaultModifiers));
+                    shortcut->key = static_cast<WORD>(ParseSessionInt(line.substr(comma + 1), shortcut->defaultKey));
+                }
+            }
+        }
 
         start = end + 1;
     }
@@ -3327,8 +3687,18 @@ void LoadAppSettings()
 
 void SaveAppSettings()
 {
-    const std::string settings = std::string("restorePreviousFiles=") +
+    std::string settings = std::string("restorePreviousFiles=") +
         (g_restorePreviousFilesOnStartup ? "1\n" : "0\n");
+    for (const ShortcutBinding& shortcut : g_shortcutBindings)
+    {
+        settings += "shortcut.";
+        settings += std::to_string(shortcut.commandId);
+        settings += "=";
+        settings += std::to_string(shortcut.modifiers);
+        settings += ",";
+        settings += std::to_string(shortcut.key);
+        settings += "\n";
+    }
     std::vector<char> bytes(settings.begin(), settings.end());
     WriteBytesToFilePath(GetSettingsFilePath(), bytes, false);
 }
@@ -4242,6 +4612,13 @@ HBRUSH GetPopupSurfaceBrush()
     return g_hPopupSurfaceBrush;
 }
 
+HBRUSH GetPopupInputBrush()
+{
+    if (!g_hPopupInputBrush)
+        g_hPopupInputBrush = CreateSolidBrush(ThemePopupInputBack());
+    return g_hPopupInputBrush;
+}
+
 HBRUSH GetMenuBackBrush()
 {
     if (!g_hMenuBackBrush)
@@ -4299,6 +4676,55 @@ bool IsSettingsOptionControl(int controlId)
     default:
         return false;
     }
+}
+
+bool IsSettingsNavigationControl(int controlId)
+{
+    return controlId == IDC_SETTINGS_TAB_GENERAL || controlId == IDC_SETTINGS_TAB_SHORTCUTS;
+}
+
+bool IsSettingsShortcutHotKeyControl(int controlId)
+{
+    return controlId >= IDC_SETTINGS_SHORTCUT_HOTKEY_BASE &&
+        controlId < IDC_SETTINGS_SHORTCUT_HOTKEY_BASE + static_cast<int>(kShortcutBindingCount);
+}
+
+int SettingsShortcutIndexFromControlId(int controlId)
+{
+    if (!IsSettingsShortcutHotKeyControl(controlId))
+        return -1;
+    return controlId - IDC_SETTINGS_SHORTCUT_HOTKEY_BASE;
+}
+
+bool IsShortcutModifierKey(WORD key)
+{
+    switch (key)
+    {
+    case VK_SHIFT:
+    case VK_CONTROL:
+    case VK_MENU:
+    case VK_LSHIFT:
+    case VK_RSHIFT:
+    case VK_LCONTROL:
+    case VK_RCONTROL:
+    case VK_LMENU:
+    case VK_RMENU:
+        return true;
+    default:
+        return false;
+    }
+}
+
+BYTE ShortcutModifiersFromKeyboardState()
+{
+    BYTE modifiers = 0;
+    if (GetKeyState(VK_CONTROL) & 0x8000)
+        modifiers |= kShortcutCtrl;
+    if (GetKeyState(VK_SHIFT) & 0x8000)
+        modifiers |= kShortcutShift;
+    if (GetKeyState(VK_MENU) & 0x8000)
+        modifiers |= kShortcutAlt;
+    return modifiers;
 }
 
 bool IsSettingsRadioControl(int controlId)
@@ -4416,13 +4842,241 @@ void DrawPopupOptionControl(const DRAWITEMSTRUCT* drawItem)
     }
 }
 
+void DrawSettingsNavigationItem(const DRAWITEMSTRUCT* drawItem)
+{
+    if (!drawItem)
+        return;
+
+    const int controlId = GetDlgCtrlID(drawItem->hwndItem);
+    const bool active = (controlId == IDC_SETTINGS_TAB_GENERAL && g_settingsActiveTab == 0) ||
+        (controlId == IDC_SETTINGS_TAB_SHORTCUTS && g_settingsActiveTab == 1);
+    const bool focused = (drawItem->itemState & ODS_FOCUS) != 0;
+    const bool pressed = (drawItem->itemState & ODS_SELECTED) != 0;
+    RECT rect = drawItem->rcItem;
+
+    FillRect(drawItem->hDC, &rect, GetPopupSurfaceBrush());
+    const COLORREF fill = active ? ThemePopupButtonBack(pressed) : ThemePopupSurface();
+    HBRUSH fillBrush = CreateSolidBrush(fill);
+    FillRect(drawItem->hDC, &rect, fillBrush);
+    DeleteObject(fillBrush);
+
+    if (active)
+    {
+        RECT accentRect{ rect.left, rect.top + 5, rect.left + 3, rect.bottom - 5 };
+        HBRUSH accentBrush = CreateSolidBrush(ThemeAccent());
+        FillRect(drawItem->hDC, &accentRect, accentBrush);
+        DeleteObject(accentBrush);
+    }
+
+    wchar_t text[128]{};
+    GetWindowTextW(drawItem->hwndItem, text, static_cast<int>(sizeof(text) / sizeof(text[0])));
+    RECT textRect = rect;
+    textRect.left += 12;
+    textRect.right -= 8;
+    SetBkMode(drawItem->hDC, TRANSPARENT);
+    SetTextColor(drawItem->hDC, active ? ThemeAccent() : ThemePopupText());
+    DrawTextW(drawItem->hDC, text, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    if (focused)
+    {
+        RECT focusRect = rect;
+        InflateRect(&focusRect, -2, -2);
+        DrawFocusRect(drawItem->hDC, &focusRect);
+    }
+}
+
 HWND CreateSettingsControl(HWND parent, const wchar_t* className, const wchar_t* text,
     DWORD style, int x, int y, int width, int height, int id)
 {
     HWND control = CreateWindowExW(0, className, text, WS_CHILD | WS_VISIBLE | style,
         x, y, width, height, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), hInst, nullptr);
     SetControlFont(control);
+    if (className && lstrcmpW(className, HOTKEY_CLASSW) == 0)
+        ApplyControlTheme(control);
     return control;
+}
+
+void SetSettingsControlVisible(HWND settingsWindow, int controlId, bool visible)
+{
+    HWND control = GetDlgItem(settingsWindow, controlId);
+    if (control)
+        ShowWindow(control, visible ? SW_SHOW : SW_HIDE);
+}
+
+void SetHotKeyControlShortcut(HWND control, const ShortcutBinding& shortcut)
+{
+    if (!control)
+        return;
+
+    const std::wstring text = ShortcutText(shortcut.modifiers, shortcut.key);
+    SetWindowTextW(control, text.c_str());
+    SendMessageW(control, EM_SETSEL, 0, -1);
+}
+
+LRESULT CALLBACK SettingsShortcutEditProc(HWND editControl, UINT message, WPARAM wParam, LPARAM lParam,
+    UINT_PTR subclassId, DWORD_PTR refData)
+{
+    UNREFERENCED_PARAMETER(subclassId);
+    const size_t index = static_cast<size_t>(refData);
+
+    switch (message)
+    {
+    case WM_GETDLGCODE:
+        return DLGC_WANTARROWS | DLGC_WANTCHARS;
+
+    case WM_SETFOCUS:
+    {
+        LRESULT result = DefSubclassProc(editControl, message, wParam, lParam);
+        SendMessageW(editControl, EM_SETSEL, 0, -1);
+        return result;
+    }
+
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+    {
+        const WORD key = static_cast<WORD>(wParam);
+        if (index < g_settingsDraftShortcuts.size() && !IsShortcutModifierKey(key))
+        {
+            g_settingsDraftShortcuts[index].key = key;
+            g_settingsDraftShortcuts[index].modifiers = ShortcutModifiersFromKeyboardState();
+            SetHotKeyControlShortcut(editControl, g_settingsDraftShortcuts[index]);
+        }
+        return 0;
+    }
+
+    case WM_CHAR:
+    case WM_SYSCHAR:
+        return 0;
+
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(editControl, SettingsShortcutEditProc, subclassId);
+        break;
+    }
+
+    return DefSubclassProc(editControl, message, wParam, lParam);
+}
+
+void ResetSettingsShortcutControls(HWND settingsWindow)
+{
+    g_settingsDraftShortcuts = g_shortcutBindings;
+    for (ShortcutBinding& shortcut : g_settingsDraftShortcuts)
+    {
+        shortcut.key = shortcut.defaultKey;
+        shortcut.modifiers = shortcut.defaultModifiers;
+    }
+
+    for (size_t index = 0; index < g_settingsDraftShortcuts.size(); ++index)
+        SetHotKeyControlShortcut(GetDlgItem(settingsWindow, IDC_SETTINGS_SHORTCUT_HOTKEY_BASE + static_cast<int>(index)),
+            g_settingsDraftShortcuts[index]);
+}
+
+bool ShortcutNeedsModifier(WORD key)
+{
+    return (key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9');
+}
+
+bool ReadSettingsShortcutControls(HWND settingsWindow, std::array<ShortcutBinding, kShortcutBindingCount>& shortcuts)
+{
+    shortcuts = g_settingsDraftShortcuts;
+    for (size_t index = 0; index < shortcuts.size(); ++index)
+    {
+        if (shortcuts[index].key == 0)
+        {
+            MessageBoxW(settingsWindow,
+                UiText(L"\u5FEB\u6377\u952E\u4E0D\u80FD\u4E3A\u7A7A\u3002", L"Shortcuts cannot be empty."),
+                L"openedit", MB_OK | MB_ICONWARNING);
+            return false;
+        }
+
+        if (ShortcutNeedsModifier(shortcuts[index].key) && shortcuts[index].modifiers == 0)
+        {
+            MessageBoxW(settingsWindow,
+                UiText(L"\u5B57\u6BCD\u548C\u6570\u5B57\u5FEB\u6377\u952E\u9700\u8981 Ctrl\u3001Shift \u6216 Alt \u7EC4\u5408\u3002",
+                    L"Letter and number shortcuts need Ctrl, Shift, or Alt."),
+                L"openedit", MB_OK | MB_ICONWARNING);
+            return false;
+        }
+    }
+
+    for (size_t left = 0; left < shortcuts.size(); ++left)
+    {
+        for (size_t right = left + 1; right < shortcuts.size(); ++right)
+        {
+            if (shortcuts[left].key == shortcuts[right].key &&
+                shortcuts[left].modifiers == shortcuts[right].modifiers)
+            {
+                MessageBoxW(settingsWindow,
+                    UiText(L"\u5FEB\u6377\u952E\u4E0D\u80FD\u91CD\u590D\u3002", L"Shortcuts must be unique."),
+                    L"openedit", MB_OK | MB_ICONWARNING);
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool ShortcutsEqual(const std::array<ShortcutBinding, kShortcutBindingCount>& left,
+    const std::array<ShortcutBinding, kShortcutBindingCount>& right)
+{
+    for (size_t index = 0; index < left.size(); ++index)
+    {
+        if (left[index].commandId != right[index].commandId ||
+            left[index].key != right[index].key ||
+            left[index].modifiers != right[index].modifiers)
+            return false;
+    }
+    return true;
+}
+
+void UpdateSettingsTabVisibility(HWND settingsWindow)
+{
+    const bool generalVisible = g_settingsActiveTab == 0;
+    const int generalControls[] = {
+        IDC_SETTINGS_GENERAL_THEME_LABEL,
+        IDC_SETTINGS_THEME_LIGHT,
+        IDC_SETTINGS_THEME_DARK,
+        IDC_SETTINGS_GENERAL_LANGUAGE_LABEL,
+        IDC_SETTINGS_LANGUAGE_CHINESE,
+        IDC_SETTINGS_LANGUAGE_ENGLISH,
+        IDC_SETTINGS_GENERAL_STARTUP_LABEL,
+        IDC_SETTINGS_RESTORE_PREVIOUS_FILES
+    };
+
+    for (int controlId : generalControls)
+        SetSettingsControlVisible(settingsWindow, controlId, generalVisible);
+
+    const bool shortcutsVisible = g_settingsActiveTab == 1;
+    for (size_t index = 0; index < g_shortcutBindings.size(); ++index)
+    {
+        SetSettingsControlVisible(settingsWindow, IDC_SETTINGS_SHORTCUT_LABEL_BASE + static_cast<int>(index), shortcutsVisible);
+        SetSettingsControlVisible(settingsWindow, IDC_SETTINGS_SHORTCUT_HOTKEY_BASE + static_cast<int>(index), shortcutsVisible);
+    }
+    SetSettingsControlVisible(settingsWindow, IDC_SETTINGS_SHORTCUT_RESET, shortcutsVisible);
+    RedrawSettingsOptions(settingsWindow);
+}
+
+void CreateSettingsShortcutControls(HWND settingsWindow)
+{
+    constexpr int firstY = 76;
+    constexpr int rowHeight = 19;
+    for (size_t index = 0; index < g_settingsDraftShortcuts.size(); ++index)
+    {
+        const int y = firstY + static_cast<int>(index) * rowHeight;
+        CreateSettingsControl(settingsWindow, L"STATIC",
+            ShortcutCommandName(g_settingsDraftShortcuts[index].commandId).c_str(),
+            SS_LEFTNOWORDWRAP, 34, y + 2, 158, 18,
+            IDC_SETTINGS_SHORTCUT_LABEL_BASE + static_cast<int>(index));
+        HWND hotKey = CreateSettingsControl(settingsWindow, L"EDIT", L"",
+            WS_TABSTOP | WS_BORDER | ES_LEFT | ES_AUTOHSCROLL, 204, y, 168, 22,
+            IDC_SETTINGS_SHORTCUT_HOTKEY_BASE + static_cast<int>(index));
+        if (hotKey)
+            SetWindowSubclass(hotKey, SettingsShortcutEditProc, 1, static_cast<DWORD_PTR>(index));
+        SetHotKeyControlShortcut(hotKey, g_settingsDraftShortcuts[index]);
+    }
+
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u6062\u590D\u9ED8\u8BA4", L"Restore Defaults"),
+        BS_OWNERDRAW | WS_TABSTOP, 16, 438, 128, 28, IDC_SETTINGS_SHORTCUT_RESET);
 }
 
 void InitializeSettingsControls(HWND settingsWindow)
@@ -4430,58 +5084,74 @@ void InitializeSettingsControls(HWND settingsWindow)
     g_settingsDraftTheme = g_appTheme;
     g_settingsDraftLanguage = g_appLanguage;
     g_settingsDraftRestorePreviousFiles = g_restorePreviousFilesOnStartup;
+    g_settingsDraftShortcuts = g_shortcutBindings;
+    g_settingsActiveTab = 0;
+
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u5E38\u89C4", L"General"),
+        BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, 404, 66, 96, 30, IDC_SETTINGS_TAB_GENERAL);
+    CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u5FEB\u6377\u952E", L"Shortcuts"),
+        BS_OWNERDRAW | WS_TABSTOP, 404, 98, 96, 30, IDC_SETTINGS_TAB_SHORTCUTS);
 
     CreateSettingsControl(settingsWindow, L"STATIC", UiText(L"\u4E3B\u9898", L"Theme"),
-        SS_LEFTNOWORDWRAP, 30, 20, 280, 20, IDC_STATIC);
+        SS_LEFTNOWORDWRAP, 30, 66, 280, 20, IDC_SETTINGS_GENERAL_THEME_LABEL);
     CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u6D45\u8272\u6A21\u5F0F", L"Light"),
-        BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, 42, 50, 120, 22, IDC_SETTINGS_THEME_LIGHT);
+        BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, 42, 96, 120, 22, IDC_SETTINGS_THEME_LIGHT);
     CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u6697\u9ED1\u6A21\u5F0F", L"Dark"),
-        BS_OWNERDRAW | WS_TABSTOP, 186, 50, 120, 22, IDC_SETTINGS_THEME_DARK);
+        BS_OWNERDRAW | WS_TABSTOP, 186, 96, 120, 22, IDC_SETTINGS_THEME_DARK);
 
     CreateSettingsControl(settingsWindow, L"STATIC", UiText(L"\u754C\u9762\u8BED\u8A00", L"Interface Language"),
-        SS_LEFTNOWORDWRAP, 30, 104, 280, 20, IDC_STATIC);
+        SS_LEFTNOWORDWRAP, 30, 150, 280, 20, IDC_SETTINGS_GENERAL_LANGUAGE_LABEL);
     CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u4E2D\u6587", L"Chinese"),
-        BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, 42, 134, 120, 22, IDC_SETTINGS_LANGUAGE_CHINESE);
+        BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, 42, 180, 120, 22, IDC_SETTINGS_LANGUAGE_CHINESE);
     CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u82F1\u6587", L"English"),
-        BS_OWNERDRAW | WS_TABSTOP, 186, 134, 120, 22, IDC_SETTINGS_LANGUAGE_ENGLISH);
+        BS_OWNERDRAW | WS_TABSTOP, 186, 180, 120, 22, IDC_SETTINGS_LANGUAGE_ENGLISH);
 
     CreateSettingsControl(settingsWindow, L"STATIC", UiText(L"\u542F\u52A8", L"Startup"),
-        SS_LEFTNOWORDWRAP, 30, 188, 280, 20, IDC_STATIC);
+        SS_LEFTNOWORDWRAP, 30, 234, 280, 20, IDC_SETTINGS_GENERAL_STARTUP_LABEL);
     CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u6253\u5F00\u4E0A\u6B21\u7684\u6587\u4EF6", L"Open previous files"),
-        BS_OWNERDRAW | WS_TABSTOP, 42, 218, 220, 22, IDC_SETTINGS_RESTORE_PREVIOUS_FILES);
+        BS_OWNERDRAW | WS_TABSTOP, 42, 264, 220, 22, IDC_SETTINGS_RESTORE_PREVIOUS_FILES);
+
+    CreateSettingsShortcutControls(settingsWindow);
 
     CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u786E\u5B9A", L"OK"),
-        BS_OWNERDRAW | WS_TABSTOP, 166, 268, 80, 28, IDOK);
+        BS_OWNERDRAW | WS_TABSTOP, 334, 438, 80, 28, IDOK);
     CreateSettingsControl(settingsWindow, L"BUTTON", UiText(L"\u53D6\u6D88", L"Cancel"),
-        BS_OWNERDRAW | WS_TABSTOP, 256, 268, 80, 28, IDCANCEL);
+        BS_OWNERDRAW | WS_TABSTOP, 424, 438, 80, 28, IDCANCEL);
 
-    RedrawSettingsOptions(settingsWindow);
+    UpdateSettingsTabVisibility(settingsWindow);
 }
 
-void ApplySettingsFromWindow(HWND settingsWindow)
+bool ApplySettingsFromWindow(HWND settingsWindow)
 {
-    UNREFERENCED_PARAMETER(settingsWindow);
-
     const AppTheme selectedTheme = g_settingsDraftTheme;
     const AppLanguage selectedLanguage = g_settingsDraftLanguage;
     const bool selectedRestorePreviousFiles = g_settingsDraftRestorePreviousFiles;
+    std::array<ShortcutBinding, kShortcutBindingCount> selectedShortcuts{};
+    if (!ReadSettingsShortcutControls(settingsWindow, selectedShortcuts))
+        return false;
 
     const bool themeChanged = selectedTheme != g_appTheme;
     const bool languageChanged = selectedLanguage != g_appLanguage;
+    const bool shortcutsChanged = !ShortcutsEqual(selectedShortcuts, g_shortcutBindings);
     g_appTheme = selectedTheme;
     g_appLanguage = selectedLanguage;
     g_restorePreviousFilesOnStartup = selectedRestorePreviousFiles;
+    g_shortcutBindings = selectedShortcuts;
     SaveAppSettings();
 
     if (themeChanged)
         ApplyAppTheme();
+    if (shortcutsChanged)
+        RebuildAcceleratorTable();
+    if (languageChanged || shortcutsChanged)
+        UpdateMainMenuText();
     if (languageChanged)
     {
-        UpdateMainMenuText();
         if (g_findWindow)
             g_findWindow->UpdateThemeAndLanguage(IsDarkTheme(), g_appLanguage == AppLanguage::Chinese);
         InvalidateStatusBar();
     }
+    return true;
 }
 
 void ShowSettingsWindow()
@@ -4495,7 +5165,7 @@ void ShowSettingsWindow()
 
     RECT ownerRect{};
     GetWindowRect(hWnd, &ownerRect);
-    RECT windowRect{ 0, 0, 360, 316 };
+    RECT windowRect{ 0, 0, 520, 484 };
     const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
     const DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT;
     AdjustWindowRectEx(&windowRect, style, FALSE, exStyle);
@@ -4527,7 +5197,7 @@ void InitializeAboutControls(HWND aboutWindow)
 
     CreateSettingsControl(aboutWindow, L"STATIC", L"openedit",
         SS_LEFTNOWORDWRAP, 78, 30, 220, 24, IDC_STATIC);
-    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0", L"Version 1.0"),
+    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.1", L"Version 1.0.1"),
         SS_LEFTNOWORDWRAP, 78, 58, 220, 20, IDC_STATIC);
     SYSTEMTIME localTime{};
     GetLocalTime(&localTime);
@@ -4652,9 +5322,17 @@ LRESULT CALLBACK SettingsWndProc(HWND settingsWindow, UINT message, WPARAM wPara
         RECT clientRect{};
         GetClientRect(settingsWindow, &clientRect);
         FillRect(hdc, &clientRect, GetPopupBackBrush());
-        DrawRoundedPanel(hdc, RECT{ 16, 14, 344, 88 }, ThemePopupSurface(), ThemePopupBorder(), 10);
-        DrawRoundedPanel(hdc, RECT{ 16, 98, 344, 172 }, ThemePopupSurface(), ThemePopupBorder(), 10);
-        DrawRoundedPanel(hdc, RECT{ 16, 182, 344, 252 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        DrawRoundedPanel(hdc, RECT{ 400, 60, 504, 134 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        if (g_settingsActiveTab == 0)
+        {
+            DrawRoundedPanel(hdc, RECT{ 16, 60, 388, 134 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+            DrawRoundedPanel(hdc, RECT{ 16, 144, 388, 218 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+            DrawRoundedPanel(hdc, RECT{ 16, 228, 388, 302 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        }
+        else
+        {
+            DrawRoundedPanel(hdc, RECT{ 16, 60, 388, 430 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        }
         EndPaint(settingsWindow, &ps);
         return 0;
     }
@@ -4665,6 +5343,12 @@ LRESULT CALLBACK SettingsWndProc(HWND settingsWindow, UINT message, WPARAM wPara
         const int notification = HIWORD(wParam);
         if (notification == BN_CLICKED)
         {
+            if (commandId == IDC_SETTINGS_TAB_GENERAL || commandId == IDC_SETTINGS_TAB_SHORTCUTS)
+            {
+                g_settingsActiveTab = commandId == IDC_SETTINGS_TAB_GENERAL ? 0 : 1;
+                UpdateSettingsTabVisibility(settingsWindow);
+                return 0;
+            }
             if (commandId == IDC_SETTINGS_THEME_LIGHT || commandId == IDC_SETTINGS_THEME_DARK)
             {
                 g_settingsDraftTheme = commandId == IDC_SETTINGS_THEME_LIGHT ? AppTheme::Light : AppTheme::Dark;
@@ -4683,12 +5367,17 @@ LRESULT CALLBACK SettingsWndProc(HWND settingsWindow, UINT message, WPARAM wPara
                 RedrawWindow(GetDlgItem(settingsWindow, commandId), nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
                 return 0;
             }
+            if (commandId == IDC_SETTINGS_SHORTCUT_RESET)
+            {
+                ResetSettingsShortcutControls(settingsWindow);
+                return 0;
+            }
         }
 
         if (commandId == IDOK)
         {
-            ApplySettingsFromWindow(settingsWindow);
-            DestroyWindow(settingsWindow);
+            if (ApplySettingsFromWindow(settingsWindow))
+                DestroyWindow(settingsWindow);
             return 0;
         }
         if (commandId == IDCANCEL)
@@ -4702,17 +5391,41 @@ LRESULT CALLBACK SettingsWndProc(HWND settingsWindow, UINT message, WPARAM wPara
     case WM_DRAWITEM:
     {
         DRAWITEMSTRUCT* drawItem = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
-        if (drawItem && IsSettingsOptionControl(GetDlgCtrlID(drawItem->hwndItem)))
-            DrawPopupOptionControl(drawItem);
-        else
-            DrawOwnerButton(drawItem);
+        if (drawItem)
+        {
+            const int controlId = GetDlgCtrlID(drawItem->hwndItem);
+            if (IsSettingsNavigationControl(controlId))
+                DrawSettingsNavigationItem(drawItem);
+            else if (IsSettingsOptionControl(controlId))
+                DrawPopupOptionControl(drawItem);
+            else
+                DrawOwnerButton(drawItem);
+        }
         return TRUE;
+    }
+
+    case WM_CTLCOLOREDIT:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetTextColor(hdc, ThemePopupText());
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, ThemePopupInputBack());
+        return reinterpret_cast<LRESULT>(GetPopupInputBrush());
     }
 
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORBTN:
     {
         HDC hdc = reinterpret_cast<HDC>(wParam);
+        const int controlId = GetDlgCtrlID(reinterpret_cast<HWND>(lParam));
+        if (IsSettingsShortcutHotKeyControl(controlId))
+        {
+            SetTextColor(hdc, ThemePopupText());
+            SetBkMode(hdc, OPAQUE);
+            SetBkColor(hdc, ThemePopupInputBack());
+            return reinterpret_cast<LRESULT>(GetPopupInputBrush());
+        }
+
         SetTextColor(hdc, ThemePopupText());
         SetBkMode(hdc, TRANSPARENT);
         SetBkColor(hdc, ThemePopupSurface());
@@ -4786,7 +5499,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     const HRESULT coInitializeResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     INITCOMMONCONTROLSEX commonControls{};
     commonControls.dwSize = sizeof(commonControls);
-    commonControls.dwICC = ICC_TREEVIEW_CLASSES | ICC_WIN95_CLASSES | ICC_BAR_CLASSES;
+    commonControls.dwICC = ICC_TREEVIEW_CLASSES | ICC_WIN95_CLASSES | ICC_BAR_CLASSES | ICC_HOTKEY_CLASS;
     InitCommonControlsEx(&commonControls);
     g_findReplaceMessage = RegisterWindowMessageW(FINDMSGSTRINGW);
     LoadAppSettings();
@@ -4811,7 +5524,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     }
 
     // 加载快捷键
-    HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_OPENEDIT));
+    RebuildAcceleratorTable();
 
     // 消息循环
     MSG msg = { 0 };
@@ -4836,11 +5549,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             }
         }
 
-        if (!TranslateAccelerator(hWnd, hAccelTable, &msg))
+        if (!g_hAccelTable || !TranslateAccelerator(hWnd, g_hAccelTable, &msg))
         {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
+    }
+
+    if (g_hAccelTable)
+    {
+        DestroyAcceleratorTable(g_hAccelTable);
+        g_hAccelTable = nullptr;
     }
 
     if (SUCCEEDED(coInitializeResult))
@@ -5176,6 +5895,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             {
                 HighlightSelectedWordOccurrences();
             }
+            else if (header->code == SCN_MARGINCLICK)
+            {
+                HandleEditorMarginClick(reinterpret_cast<const SCNotification*>(lParam));
+            }
         }
         return 0;
     }
@@ -5441,9 +6164,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         DeleteObject(g_hPopupBackBrush);
         DeleteObject(g_hPopupSurfaceBrush);
+        DeleteObject(g_hPopupInputBrush);
         DeleteObject(g_hMenuBackBrush);
         g_hPopupBackBrush = nullptr;
         g_hPopupSurfaceBrush = nullptr;
+        g_hPopupInputBrush = nullptr;
         g_hMenuBackBrush = nullptr;
         PostQuitMessage(0);
         break;
@@ -5834,7 +6559,7 @@ LRESULT CALLBACK TabBarWndProc(HWND tabBar, UINT message, WPARAM wParam, LPARAM 
         if (menu)
         {
             AppendMenuW(menu, MF_STRING, IDM_TAB_CLOSE,
-                UiText(L"\u5173\u95ED\u6807\u7B7E", L"Close Tab"));
+                MenuLabelWithShortcut(L"\u5173\u95ED\u6807\u7B7E", L"Close Tab", IDM_TAB_CLOSE).c_str());
             AppendMenuW(menu, MF_STRING, IDM_TAB_CLOSE_OTHERS,
                 UiText(L"\u5173\u95ED\u5176\u4ED6\u6807\u7B7E", L"Close Other Tabs"));
             AppendMenuW(menu, MF_STRING, IDM_TAB_CLOSE_ALL,
@@ -5842,6 +6567,7 @@ LRESULT CALLBACK TabBarWndProc(HWND tabBar, UINT message, WPARAM wParam, LPARAM 
             std::vector<std::unique_ptr<ThemedMenuItem>> menuItems;
             ApplyPopupMenuTheme(menu, menuItems);
             TrackPopupMenu(menu, TPM_RIGHTBUTTON, screenPoint.x, screenPoint.y, 0, hWnd, nullptr);
+            g_contextTabIndex = -1;
             DestroyMenu(menu);
         }
         return 0;
@@ -5868,17 +6594,31 @@ int GetActiveDocumentEolMode()
     return SC_EOL_CRLF;
 }
 
+sptr_t CountCharactersInRange(sptr_t start, sptr_t end)
+{
+    start = (std::max)(start, static_cast<sptr_t>(0));
+    end = (std::max)(end, static_cast<sptr_t>(0));
+    if (!g_hSci || end <= start)
+        return 0;
+
+    const sptr_t count = Sci(SCI_COUNTCHARACTERS, static_cast<uptr_t>(start), end);
+    return count >= 0 ? count : end - start;
+}
+
 std::wstring BuildStatusSummary()
 {
     if (!g_hSci)
         return UiText(L"\u957F\u5EA6: 0    \u884C\u6570: 0    \u884C 1, \u5217 1, \u4F4D\u7F6E 0",
             L"Length: 0    Lines: 0    Ln 1, Col 1, Pos 0");
 
-    const sptr_t length = Sci(SCI_GETLENGTH);
+    const sptr_t byteLength = Sci(SCI_GETLENGTH);
     const sptr_t lineCount = Sci(SCI_GETLINECOUNT);
     const sptr_t position = Sci(SCI_GETCURRENTPOS);
     const sptr_t line = Sci(SCI_LINEFROMPOSITION, static_cast<uptr_t>(position), 0);
-    const sptr_t column = Sci(SCI_GETCOLUMN, static_cast<uptr_t>(position), 0);
+    const sptr_t lineStart = Sci(SCI_POSITIONFROMLINE, static_cast<uptr_t>(line), 0);
+    const sptr_t length = CountCharactersInRange(0, byteLength);
+    const sptr_t column = CountCharactersInRange(lineStart, position);
+    const sptr_t characterPosition = CountCharactersInRange(0, position);
 
     if (g_appLanguage == AppLanguage::Chinese)
     {
@@ -5886,14 +6626,14 @@ std::wstring BuildStatusSummary()
             L"    \u884C\u6570: " + std::to_wstring(lineCount) +
             L"    \u884C " + std::to_wstring(line + 1) +
             L", \u5217 " + std::to_wstring(column + 1) +
-            L", \u4F4D\u7F6E " + std::to_wstring(position);
+            L", \u4F4D\u7F6E " + std::to_wstring(characterPosition);
     }
 
     return std::wstring(L"Length: ") + std::to_wstring(length) +
         L"    Lines: " + std::to_wstring(lineCount) +
         L"    Ln " + std::to_wstring(line + 1) +
         L", Col " + std::to_wstring(column + 1) +
-        L", Pos " + std::to_wstring(position);
+        L", Pos " + std::to_wstring(characterPosition);
 }
 
 RECT GetStatusEolRect(HWND statusBar)
@@ -5901,6 +6641,13 @@ RECT GetStatusEolRect(HWND statusBar)
     RECT clientRect{};
     GetClientRect(statusBar, &clientRect);
     return RECT{ clientRect.right - 150, clientRect.top, clientRect.right - 8, clientRect.bottom };
+}
+
+RECT GetStatusFolderToggleRect(HWND statusBar)
+{
+    RECT clientRect{};
+    GetClientRect(statusBar, &clientRect);
+    return RECT{ clientRect.left, clientRect.top, clientRect.left + kStatusFolderToggleWidth, clientRect.bottom };
 }
 
 RECT GetStatusEncodingRect(HWND statusBar)
@@ -5911,6 +6658,10 @@ RECT GetStatusEncodingRect(HWND statusBar)
 
 StatusHitArea HitTestStatusBar(HWND statusBar, POINT point)
 {
+    RECT folderToggleRect = GetStatusFolderToggleRect(statusBar);
+    if (PtInRect(&folderToggleRect, point))
+        return StatusHitArea::FolderToggle;
+
     RECT encodingRect = GetStatusEncodingRect(statusBar);
     if (PtInRect(&encodingRect, point))
         return StatusHitArea::Encoding;
@@ -5940,6 +6691,39 @@ void DrawStatusSeparator(HDC hdc, int x, int top, int bottom)
     DeleteObject(pen);
 }
 
+void DrawStatusFolderToggleIcon(HDC hdc, const RECT& buttonRect)
+{
+    DrawStatusSeparator(hdc, buttonRect.right, buttonRect.top, buttonRect.bottom);
+
+    const int iconLeft = buttonRect.left + ((buttonRect.right - buttonRect.left) - kStatusFolderToggleIconWidth) / 2;
+    const int iconTop = buttonRect.top + ((buttonRect.bottom - buttonRect.top) - kStatusFolderToggleIconHeight) / 2;
+    RECT iconRect{
+        iconLeft,
+        iconTop,
+        iconLeft + kStatusFolderToggleIconWidth,
+        iconTop + kStatusFolderToggleIconHeight
+    };
+    RECT sidebarRect{ iconRect.left + 1, iconRect.top + 1, iconRect.left + 6, iconRect.bottom - 1 };
+
+    HBRUSH iconBrush = CreateSolidBrush(g_folderPaneVisible ? ThemeAccent() : ThemeStatusBack());
+    HPEN iconPen = CreatePen(PS_SOLID, 1, g_folderPaneVisible ? ThemeAccent() : ThemeStatusText());
+    HGDIOBJ oldBrush = SelectObject(hdc, iconBrush);
+    HGDIOBJ oldPen = SelectObject(hdc, iconPen);
+    RoundRect(hdc, iconRect.left, iconRect.top, iconRect.right, iconRect.bottom, 3, 3);
+    Rectangle(hdc, sidebarRect.left, sidebarRect.top, sidebarRect.right, sidebarRect.bottom);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(iconPen);
+    DeleteObject(iconBrush);
+
+    HPEN dividerPen = CreatePen(PS_SOLID, 1, g_folderPaneVisible ? RGB(255, 255, 255) : ThemeStatusLine());
+    oldPen = SelectObject(hdc, dividerPen);
+    MoveToEx(hdc, sidebarRect.right + 1, iconRect.top + 2, nullptr);
+    LineTo(hdc, sidebarRect.right + 1, iconRect.bottom - 2);
+    SelectObject(hdc, oldPen);
+    DeleteObject(dividerPen);
+}
+
 void DrawStatusBar(HWND statusBar, HDC hdc)
 {
     RECT clientRect{};
@@ -5963,8 +6747,10 @@ void DrawStatusBar(HWND statusBar, HDC hdc)
 
     RECT eolRect = GetStatusEolRect(statusBar);
     RECT encodingRect = GetStatusEncodingRect(statusBar);
-    RECT summaryRect{ clientRect.left + 8, clientRect.top, encodingRect.left - 8, clientRect.bottom };
+    RECT folderToggleRect = GetStatusFolderToggleRect(statusBar);
+    RECT summaryRect{ folderToggleRect.right + 8, clientRect.top, encodingRect.left - 8, clientRect.bottom };
 
+    DrawStatusFolderToggleIcon(hdc, folderToggleRect);
     const std::wstring summary = BuildStatusSummary();
     DrawTextW(hdc, summary.c_str(), -1, &summaryRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
@@ -6041,13 +6827,28 @@ LRESULT CALLBACK StatusBarWndProc(HWND statusBar, UINT message, WPARAM wParam, L
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         const StatusHitArea hitArea = HitTestStatusBar(statusBar, point);
-        if (hitArea == StatusHitArea::Encoding)
+        if (hitArea == StatusHitArea::FolderToggle)
+        {
+            return 0;
+        }
+        else if (hitArea == StatusHitArea::Encoding)
         {
             ShowEncodingMenu(statusBar, point);
         }
         else if (hitArea == StatusHitArea::EolFormat)
         {
             ShowEolMenu(statusBar, point);
+        }
+        return 0;
+    }
+
+    case WM_LBUTTONUP:
+    {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        if (HitTestStatusBar(statusBar, point) == StatusHitArea::FolderToggle)
+        {
+            ToggleFolderPane();
+            return 0;
         }
         return 0;
     }

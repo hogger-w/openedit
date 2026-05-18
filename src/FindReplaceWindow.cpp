@@ -468,7 +468,11 @@ bool OpenEditFindWindow::Show(HWND owner, bool replaceVisible, const std::wstrin
     SetWindowTextW(GetDlgItem(window_, IDC_FIND_TEXT), findText.c_str());
     SetWindowTextW(GetDlgItem(window_, IDC_REPLACE_TEXT), replaceText.c_str());
     UpdateThemeAndLanguage(darkTheme_, chineseLanguage_);
-    PositionWindow();
+    const bool wasVisible = IsVisible();
+    if (!wasVisible)
+        PositionWindow();
+    else
+        LayoutControls();
     ShowWindow(window_, SW_SHOWNOACTIVATE);
     SetForegroundWindow(window_);
     active_ = true;
@@ -480,8 +484,19 @@ bool OpenEditFindWindow::Show(HWND owner, bool replaceVisible, const std::wstrin
 
 void OpenEditFindWindow::Hide()
 {
-    if (window_)
-        ShowWindow(window_, SW_HIDE);
+    if (!window_)
+        return;
+
+    SaveWindowPosition();
+    if (owner_ && IsWindow(owner_))
+        SetActiveWindow(owner_);
+
+    SetWindowPos(window_, nullptr, 0, 0, 0, 0,
+        SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+        SWP_NOOWNERZORDER | SWP_NOACTIVATE);
+
+    if (owner_ && IsWindow(owner_))
+        SetActiveWindow(owner_);
 }
 
 void OpenEditFindWindow::Destroy()
@@ -698,17 +713,45 @@ void OpenEditFindWindow::PositionWindow()
     RECT ownerRect{};
     GetWindowRect(owner_, &ownerRect);
 
-    RECT windowRect{ 0, 0, kWindowWidth, kClientHeight };
-    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
-    const DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT | WS_EX_LAYERED;
-    AdjustWindowRectEx(&windowRect, style, FALSE, exStyle);
+    RECT windowRect{};
+    GetWindowRect(window_, &windowRect);
     const int width = windowRect.right - windowRect.left;
     const int height = windowRect.bottom - windowRect.top;
-    const int x = (std::max)(ownerRect.left + 24, ownerRect.right - width - 36);
-    const int y = ownerRect.top + 86;
+    int x = hasLastPosition_ ? lastPosition_.x :
+        ownerRect.left + ((ownerRect.right - ownerRect.left) - width) / 2;
+    int y = hasLastPosition_ ? lastPosition_.y :
+        ownerRect.top + ((ownerRect.bottom - ownerRect.top) - height) / 2;
 
-    SetWindowPos(window_, HWND_TOP, x, y, width, height, SWP_NOACTIVATE);
+    HMONITOR monitor = hasLastPosition_ ?
+        MonitorFromPoint(lastPosition_, MONITOR_DEFAULTTONEAREST) :
+        MonitorFromWindow(owner_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+    if (monitor && GetMonitorInfoW(monitor, &monitorInfo))
+    {
+        const RECT& work = monitorInfo.rcWork;
+        const int workLeft = static_cast<int>(work.left);
+        const int workTop = static_cast<int>(work.top);
+        const int maxX = (std::max)(workLeft, static_cast<int>(work.right) - width);
+        const int maxY = (std::max)(workTop, static_cast<int>(work.bottom) - height);
+        x = (std::min)((std::max)(x, workLeft), maxX);
+        y = (std::min)((std::max)(y, workTop), maxY);
+    }
+
+    SetWindowPos(window_, HWND_TOP, x, y, width, height, SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     LayoutControls();
+}
+
+void OpenEditFindWindow::SaveWindowPosition()
+{
+    if (!window_)
+        return;
+
+    RECT windowRect{};
+    if (!GetWindowRect(window_, &windowRect))
+        return;
+
+    lastPosition_ = POINT{ windowRect.left, windowRect.top };
+    hasLastPosition_ = true;
 }
 
 void OpenEditFindWindow::UpdateTexts()

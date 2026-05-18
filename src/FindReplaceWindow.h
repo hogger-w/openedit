@@ -51,6 +51,7 @@ private:
     HWND CreateControl(const wchar_t* className, const wchar_t* text, DWORD style, DWORD exStyle, int id);
     void LayoutControls();
     void PositionWindow();
+    void SaveWindowPosition();
     void UpdateTexts();
     void UpdateBrushes();
     void RedrawThemedControls();
@@ -88,4 +89,6 @@ private:
     bool regex_ = false;
     bool opacityEnabled_ = false;
     bool opacityAlways_ = false;
+    POINT lastPosition_{};
+    bool hasLastPosition_ = false;
 };
