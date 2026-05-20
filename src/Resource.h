@@ -68,9 +68,20 @@
 #define IDM_LANG_LUA            32786
 #define IDM_LANG_RUBY           32787
 #define IDM_LANG_MARKDOWN       32788
+#define IDM_LANG_YAML           32826
+#define IDM_LANG_TOML           32827
+#define IDM_LANG_PROPERTIES     32828
+#define IDM_LANG_MAKEFILE       32829
+#define IDM_LANG_DIFF           32830
+#define IDM_LANG_BATCH          32831
+#define IDM_LANG_ZIG            32832
+#define IDM_LANG_NIM            32833
+#define IDM_LANG_REGISTRY       32834
+#define IDM_LANG_INNO           32835
 #define IDC_FOLDER_TREE         1001
 #define IDC_TAB_BAR             1002
 #define IDC_STATUS_BAR          1003
+#define IDC_OPEN_FILES_TREE     1301
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
 #endif
@@ -81,8 +92,8 @@
 
 #define _APS_NO_MFC					130
 #define _APS_NEXT_RESOURCE_VALUE	129
-#define _APS_NEXT_COMMAND_VALUE		32826
-#define _APS_NEXT_CONTROL_VALUE		1008
+#define _APS_NEXT_COMMAND_VALUE		32836
+#define _APS_NEXT_CONTROL_VALUE		1302
 #define _APS_NEXT_SYMED_VALUE		110
 #endif
 #endif

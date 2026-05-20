@@ -49,6 +49,12 @@
 constexpr int kFolderPaneMinWidth = 160;
 constexpr int kFolderPaneMaxWidth = 520;
 constexpr int kFolderPaneDividerWidth = 5;
+constexpr int kFolderPaneOpenFilesDefaultHeight = 100;
+constexpr int kFolderPaneOpenFilesMaxHeight = 200;
+constexpr int kFolderPaneSectionMinHeight = 72;
+constexpr int kFolderPaneSectionDividerHeight = 5;
+constexpr int kFolderPaneHeaderHeight = 26;
+constexpr int kFolderPaneHeaderTextInset = 10;
 constexpr int kEditorMinWidth = 160;
 constexpr int kTabBarHeight = 26;
 constexpr int kStatusBarHeight = 24;
@@ -72,6 +78,7 @@ constexpr BYTE kShortcutCtrl = 0x01;
 constexpr BYTE kShortcutShift = 0x02;
 constexpr BYTE kShortcutAlt = 0x04;
 constexpr int HTFOLDERTOGGLE = 100;
+constexpr int HTFOLDERSECTIONDIVIDER = 101;
 constexpr COLORREF kFolderPaneBackColor = RGB(236, 242, 248);
 constexpr COLORREF kFolderPaneTextColor = RGB(32, 45, 58);
 constexpr COLORREF kFolderPaneLineColor = RGB(188, 202, 216);
@@ -168,6 +175,7 @@ WCHAR szTitle[MAX_LOADSTRING];
 WCHAR szWindowClass[MAX_LOADSTRING];
 HWND hWnd = nullptr;
 HWND g_hSci = nullptr;          // Scintilla窗口句柄
+HWND g_hOpenFilesTree = nullptr;
 HWND g_hFolderTree = nullptr;
 HWND g_hTabBar = nullptr;
 HWND g_hStatusBar = nullptr;
@@ -180,6 +188,7 @@ HACCEL g_hAccelTable = nullptr;
 HMENU g_hSettingsMenu = nullptr;
 HIMAGELIST g_hFolderTreeImageList = nullptr;
 WNDPROC g_originalFolderTreeProc = nullptr;
+WNDPROC g_originalOpenFilesTreeProc = nullptr;
 std::unique_ptr<OpenEditFindWindow> g_findWindow;
 HBRUSH g_hPopupBackBrush = nullptr;
 HBRUSH g_hPopupSurfaceBrush = nullptr;
@@ -194,9 +203,11 @@ AppTheme g_appTheme = AppTheme::Dark;
 AppLanguage g_appLanguage = AppLanguage::Chinese;
 bool g_folderPaneVisible = false;
 bool g_draggingFolderSplitter = false;
+bool g_draggingFolderSectionSplitter = false;
 bool g_applyingFolderTreeTheme = false;
 int g_folderPaneWidth = kFolderPaneMinWidth;
 int g_folderSplitterPreviewWidth = -1;
+int g_openFilesPaneHeight = kFolderPaneOpenFilesDefaultHeight;
 bool g_restorePreviousFilesOnStartup = true;
 bool g_restoreFolderInSession = false;
 AppTheme g_settingsDraftTheme = AppTheme::Dark;
@@ -286,7 +297,14 @@ struct FolderItem
     bool childrenLoaded = false;
 };
 
+struct OpenFileItem
+{
+    int tabIndex = -1;
+    std::wstring title;
+};
+
 std::vector<std::unique_ptr<FolderItem>> g_folderItems;
+std::vector<std::unique_ptr<OpenFileItem>> g_openFileItems;
 int g_folderIconIndex = 0;
 int g_folderOpenIconIndex = 0;
 int g_textFileIconIndex = 0;
@@ -303,6 +321,7 @@ struct DocumentTab
     int eolMode = SC_EOL_CRLF;
     bool modified = false;
     bool untitled = true;
+    bool openedFromFolder = false;
 };
 
 std::vector<DocumentTab> g_tabs;
@@ -320,6 +339,7 @@ LRESULT CALLBACK    StatusBarWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    SettingsWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    AboutWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    FolderTreeWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    OpenFilesTreeWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    FolderSplitterPreviewWndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 void                SetActiveTabModified(bool modified);
@@ -335,8 +355,11 @@ void                UpdateLanguageMenuCheck();
 void                ShowSettingsWindow();
 void                ShowAboutWindow();
 void                InvalidateTabBar();
+void                InvalidateOpenFilesTree();
 void                InvalidateFolderTree();
+void                RefreshOpenFilesTree();
 void                PopulateFolderTree(const std::wstring& folderPath);
+void                SwitchToTab(int tabIndex);
 void                ApplyWindowChromeTheme(HWND window);
 void                ApplyControlTheme(HWND window);
 void                ApplyFolderTreeTheme();
@@ -345,6 +368,7 @@ HBRUSH              GetMenuBackBrush();
 void                ExpandFolderTreeItem(HTREEITEM treeItem);
 void                ToggleFolderTreeItem(HTREEITEM treeItem);
 bool                HandleFolderTreeItemClickAt(POINT clientPoint, bool doubleClick);
+bool                HandleOpenFilesTreeItemClickAt(POINT clientPoint);
 void                ClearWordHighlights();
 void                InvalidateStatusBar();
 
@@ -363,6 +387,16 @@ enum class SyntaxFamily
     Lua,
     Ruby,
     Markdown,
+    Yaml,
+    Toml,
+    Properties,
+    Makefile,
+    Diff,
+    Batch,
+    Zig,
+    Nim,
+    Registry,
+    Inno,
 };
 
 struct LanguageDefinition
@@ -373,7 +407,7 @@ struct LanguageDefinition
     std::array<const char*, 8> keywords;
 };
 
-const std::array<LanguageDefinition, 18> kLanguages = { {
+const std::array<LanguageDefinition, 28> kLanguages = { {
     { IDM_LANG_TEXT, nullptr, SyntaxFamily::Plain, {} },
     { IDM_LANG_CPP, "cpp", SyntaxFamily::CppLike, {
         "alignas alignof and and_eq asm auto bitand bitor bool break case catch char char8_t char16_t char32_t class compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double dynamic_cast else enum explicit export extern false final float for friend goto if import inline int long module mutable namespace new noexcept not not_eq nullptr operator or or_eq override private protected public register reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while xor xor_eq",
@@ -447,6 +481,39 @@ const std::array<LanguageDefinition, 18> kLanguages = { {
         "__FILE__ __LINE__ alias and begin break case class def defined? do else elsif end ensure false for if in module next nil not or redo rescue retry return self super then true undef unless until when while yield"
     } },
     { IDM_LANG_MARKDOWN, "markdown", SyntaxFamily::Markdown, {} },
+    { IDM_LANG_YAML, "yaml", SyntaxFamily::Yaml, {
+        "false no null off on true yes"
+    } },
+    { IDM_LANG_TOML, "toml", SyntaxFamily::Toml, {
+        "false inf nan true"
+    } },
+    { IDM_LANG_PROPERTIES, "props", SyntaxFamily::Properties, {} },
+    { IDM_LANG_MAKEFILE, "makefile", SyntaxFamily::Makefile, {
+        "define else endef endif export ifdef ifeq ifndef ifneq include override private undefine unexport vpath",
+        ".DEFAULT .DELETE_ON_ERROR .EXPORT_ALL_VARIABLES .IGNORE .INTERMEDIATE .LOW_RESOLUTION_TIME .NOTINTERMEDIATE .ONESHELL .PHONY .POSIX .PRECIOUS .SECONDARY .SECONDEXPANSION .SILENT .SUFFIXES"
+    } },
+    { IDM_LANG_DIFF, "diff", SyntaxFamily::Diff, {} },
+    { IDM_LANG_BATCH, "batch", SyntaxFamily::Batch, {
+        "assoc attrib call cd chcp chdir choice cls color copy date del dir do echo else endlocal erase errorlevel exist exit for ftype goto if in md mkdir move not pause popd prompt pushd rd rem ren rename rmdir set setlocal shift start time title type ver verify vol",
+        "break cacls chkdsk comp compact convert diskcopy doskey find findstr format graftabl help ipconfig label mode more net path ping replace robocopy sort subst tree where xcopy"
+    } },
+    { IDM_LANG_ZIG, "zig", SyntaxFamily::Zig, {
+        "addrspace align allowzero and anyframe anytype asm async await break callconv catch comptime const continue defer else enum errdefer error export extern fn for if inline linksection noalias noinline nosuspend opaque or orelse packed pub resume return struct suspend switch test threadlocal try union unreachable usingnamespace var volatile while",
+        "bool c_char c_int c_long c_longdouble c_longlong c_short c_uint c_ulong c_ulonglong c_ushort comptime_float comptime_int f16 f32 f64 f80 f128 isize noreturn type usize void",
+        "i8 i16 i32 i64 i128 u8 u16 u32 u64 u128",
+        "false null true undefined"
+    } },
+    { IDM_LANG_NIM, "nim", SyntaxFamily::Nim, {
+        "addr and as asm bind block break case cast concept const continue converter defer discard distinct div do elif else end enum except export finally for from func if import in include interface is isnot iterator let macro method mixin mod nil not notin object of or out proc ptr raise ref return shl shr static template try tuple type using var when while xor yield",
+        "array bool char cstring float float32 float64 int int8 int16 int32 int64 openArray pointer seq string uint uint8 uint16 uint32 uint64 varargs void"
+    } },
+    { IDM_LANG_REGISTRY, "registry", SyntaxFamily::Registry, {} },
+    { IDM_LANG_INNO, "inno", SyntaxFamily::Inno, {
+        "AppName AppVersion Compression DefaultDirName DefaultGroupName OutputBaseFilename SetupIconFile SolidCompression",
+        "ArchitecturesAllowed ArchitecturesInstallIn64BitMode ChangesAssociations ChangesEnvironment CloseApplications CreateAppDir DisableDirPage DisableProgramGroupPage PrivilegesRequired UninstallDisplayIcon",
+        "Code Components CustomMessages Dirs Files Icons InstallDelete Languages Messages Registry Run Setup Tasks Types UninstallDelete",
+        "begin break case const continue do downto else end except finally for function if nil not of or procedure repeat then to try until var while"
+    } },
 } };
 
 sptr_t Sci(unsigned int message, uptr_t wParam = 0, sptr_t lParam = 0)
@@ -605,9 +672,31 @@ std::wstring ShortcutTextForCommand(int commandId)
     return shortcut ? ShortcutText(shortcut->modifiers, shortcut->key) : L"";
 }
 
+std::wstring StripMenuMnemonic(std::wstring text)
+{
+    for (size_t index = 0; index < text.size();)
+    {
+        if (text[index] == L'(' && index + 3 < text.size() &&
+            text[index + 1] == L'&' && text[index + 3] == L')')
+        {
+            text.erase(index, 4);
+            continue;
+        }
+
+        if (text[index] == L'&')
+        {
+            text.erase(index, 1);
+            continue;
+        }
+
+        ++index;
+    }
+    return text;
+}
+
 std::wstring MenuLabelWithShortcut(const wchar_t* chinese, const wchar_t* english, int commandId)
 {
-    std::wstring label = UiText(chinese, english);
+    std::wstring label = StripMenuMnemonic(UiText(chinese, english));
     const std::wstring shortcut = ShortcutTextForCommand(commandId);
     if (!shortcut.empty())
         label += L"\t" + shortcut;
@@ -778,21 +867,27 @@ void ApplyControlTheme(HWND window)
     SetWindowTheme(window, IsDarkTheme() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
 }
 
-void ApplyFolderTreeTheme()
+void ApplyFolderPaneTreeTheme(HWND treeWindow)
 {
-    if (!g_hFolderTree)
+    if (!treeWindow)
         return;
 
     if (!g_applyingFolderTreeTheme)
     {
         g_applyingFolderTreeTheme = true;
-        ApplyControlTheme(g_hFolderTree);
+        ApplyControlTheme(treeWindow);
         g_applyingFolderTreeTheme = false;
     }
 
-    TreeView_SetBkColor(g_hFolderTree, ThemeFolderPaneBack());
-    TreeView_SetTextColor(g_hFolderTree, ThemeFolderPaneText());
-    TreeView_SetLineColor(g_hFolderTree, ThemeFolderPaneLine());
+    TreeView_SetBkColor(treeWindow, ThemeFolderPaneBack());
+    TreeView_SetTextColor(treeWindow, ThemeFolderPaneText());
+    TreeView_SetLineColor(treeWindow, ThemeFolderPaneLine());
+}
+
+void ApplyFolderTreeTheme()
+{
+    ApplyFolderPaneTreeTheme(g_hOpenFilesTree);
+    ApplyFolderPaneTreeTheme(g_hFolderTree);
 }
 
 ThemedMenuItem* GetThemedMenuItemData(HMENU menu, int index)
@@ -882,23 +977,17 @@ void ApplyPopupMenuTheme(HMENU menu, std::vector<std::unique_ptr<ThemedMenuItem>
     ApplyOwnerDrawToMenu(menu, false, storage);
 }
 
-void DrawThemedMenuArrow(HDC hdc, const RECT& rect, COLORREF color)
+void SplitMenuItemText(const std::wstring& text, std::wstring& label, std::wstring& accelerator)
 {
-    const int centerY = rect.top + ((rect.bottom - rect.top) / 2);
-    POINT points[3]{
-        { rect.right - 13, centerY - 4 },
-        { rect.right - 7, centerY },
-        { rect.right - 13, centerY + 4 },
-    };
-    HBRUSH brush = CreateSolidBrush(color);
-    HPEN pen = CreatePen(PS_SOLID, 1, color);
-    HGDIOBJ oldBrush = SelectObject(hdc, brush);
-    HGDIOBJ oldPen = SelectObject(hdc, pen);
-    Polygon(hdc, points, 3);
-    SelectObject(hdc, oldPen);
-    SelectObject(hdc, oldBrush);
-    DeleteObject(pen);
-    DeleteObject(brush);
+    label = text;
+    accelerator.clear();
+
+    const size_t tab = label.find(L'\t');
+    if (tab == std::wstring::npos)
+        return;
+
+    accelerator = label.substr(tab + 1);
+    label.resize(tab);
 }
 
 void DrawThemedMenuItem(const DRAWITEMSTRUCT* drawItem)
@@ -938,14 +1027,9 @@ void DrawThemedMenuItem(const DRAWITEMSTRUCT* drawItem)
     SetBkMode(drawItem->hDC, TRANSPARENT);
     SetTextColor(drawItem->hDC, text);
 
-    std::wstring label = item->text;
+    std::wstring label;
     std::wstring accelerator;
-    const size_t tab = label.find(L'\t');
-    if (tab != std::wstring::npos)
-    {
-        accelerator = label.substr(tab + 1);
-        label.resize(tab);
-    }
+    SplitMenuItemText(item->text, label, accelerator);
 
     if (item->topLevel)
     {
@@ -969,15 +1053,28 @@ void DrawThemedMenuItem(const DRAWITEMSTRUCT* drawItem)
             DeleteObject(checkPen);
         }
 
-        RECT textRect{ rect.left + 30, rect.top, rect.right - 22, rect.bottom };
+        constexpr int kMenuTextLeft = 30;
+        constexpr int kMenuRightPadding = 12;
+        constexpr int kMenuAcceleratorGap = 34;
+
+        const int rightReserve = kMenuRightPadding;
+        int labelRight = rect.right - rightReserve;
+        if (!accelerator.empty())
+        {
+            SIZE acceleratorSize{};
+            GetTextExtentPoint32W(drawItem->hDC, accelerator.c_str(),
+                static_cast<int>(accelerator.size()), &acceleratorSize);
+            labelRight -= acceleratorSize.cx + kMenuAcceleratorGap;
+        }
+
+        const int textLeft = static_cast<int>(rect.left) + kMenuTextLeft;
+        RECT textRect{ textLeft, rect.top, (std::max)(textLeft + 1, labelRight), rect.bottom };
         DrawTextW(drawItem->hDC, label.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         if (!accelerator.empty())
         {
-            RECT acceleratorRect{ rect.left + 140, rect.top, rect.right - 24, rect.bottom };
+            RECT acceleratorRect{ rect.left + kMenuTextLeft, rect.top, rect.right - rightReserve, rect.bottom };
             DrawTextW(drawItem->hDC, accelerator.c_str(), -1, &acceleratorRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
-        if (item->hasSubMenu)
-            DrawThemedMenuArrow(drawItem->hDC, rect, text);
     }
 
     SelectObject(drawItem->hDC, oldFont);
@@ -1001,9 +1098,17 @@ void MeasureThemedMenuItem(MEASUREITEMSTRUCT* measureItem)
 
     HDC hdc = GetDC(hWnd);
     HGDIOBJ oldFont = hdc ? SelectObject(hdc, GetStockObject(DEFAULT_GUI_FONT)) : nullptr;
-    SIZE size{};
+    std::wstring label;
+    std::wstring accelerator;
+    SplitMenuItemText(item->text, label, accelerator);
+    SIZE labelSize{};
+    SIZE acceleratorSize{};
     if (hdc)
-        GetTextExtentPoint32W(hdc, item->text.c_str(), static_cast<int>(item->text.size()), &size);
+    {
+        GetTextExtentPoint32W(hdc, label.c_str(), static_cast<int>(label.size()), &labelSize);
+        if (!accelerator.empty())
+            GetTextExtentPoint32W(hdc, accelerator.c_str(), static_cast<int>(accelerator.size()), &acceleratorSize);
+    }
 
     if (hdc && oldFont)
         SelectObject(hdc, oldFont);
@@ -1012,12 +1117,21 @@ void MeasureThemedMenuItem(MEASUREITEMSTRUCT* measureItem)
 
     if (item->topLevel)
     {
-        measureItem->itemWidth = static_cast<UINT>((std::max)(34L, size.cx + 8));
+        measureItem->itemWidth = static_cast<UINT>((std::max)(34L, labelSize.cx + 8));
         measureItem->itemHeight = 22;
     }
     else
     {
-        measureItem->itemWidth = static_cast<UINT>((std::max)(180L, size.cx + 62));
+        constexpr LONG kMenuTextLeft = 30;
+        constexpr LONG kMenuRightPadding = 12;
+        constexpr LONG kMenuAcceleratorGap = 34;
+
+        LONG width = kMenuTextLeft + labelSize.cx;
+        if (!accelerator.empty())
+            width += kMenuAcceleratorGap + acceleratorSize.cx;
+        width += kMenuRightPadding;
+
+        measureItem->itemWidth = static_cast<UINT>((std::max)(180L, width));
         measureItem->itemHeight = 26;
     }
 }
@@ -1064,7 +1178,8 @@ void SetMenuText(HMENU menu, UINT commandId, const wchar_t* text)
     if (!menu)
         return;
 
-    ModifyMenuW(menu, commandId, MF_BYCOMMAND | MF_STRING, commandId, text);
+    const std::wstring displayText = StripMenuMnemonic(text ? text : L"");
+    ModifyMenuW(menu, commandId, MF_BYCOMMAND | MF_STRING, commandId, displayText.c_str());
 }
 
 bool MenuHasCommand(HMENU menu, UINT commandId)
@@ -1091,6 +1206,144 @@ void EnsureEditSearchCommands(HMENU editMenu)
         MenuLabelWithShortcut(L"\u67E5\u627E(&F)", L"Find(&F)", IDM_SEARCH_FIND).c_str());
     AppendMenuW(editMenu, MF_STRING, IDM_SEARCH_REPLACE,
         MenuLabelWithShortcut(L"\u66FF\u6362(&R)", L"Replace(&R)", IDM_SEARCH_REPLACE).c_str());
+}
+
+struct LanguageMenuLabel
+{
+    int commandId;
+    const wchar_t* chinese;
+    const wchar_t* english;
+};
+
+struct LanguageMenuGroup
+{
+    const wchar_t* title;
+    wchar_t firstLetter;
+    wchar_t lastLetter;
+};
+
+const std::array<LanguageMenuLabel, 28> kLanguageMenuLabels = { {
+    { IDM_LANG_TEXT, L"\u7EAF\u6587\u672C(&T)", L"Plain Text(&T)" },
+    { IDM_LANG_CPP, L"C/C++(&C)", L"C/C++(&C)" },
+    { IDM_LANG_CSHARP, L"C#(&S)", L"C#(&S)" },
+    { IDM_LANG_JAVA, L"Java(&J)", L"Java(&J)" },
+    { IDM_LANG_JAVASCRIPT, L"JavaScript(&A)", L"JavaScript(&A)" },
+    { IDM_LANG_TYPESCRIPT, L"TypeScript(&Y)", L"TypeScript(&Y)" },
+    { IDM_LANG_PYTHON, L"Python(&P)", L"Python(&P)" },
+    { IDM_LANG_HTML, L"HTML(&H)", L"HTML(&H)" },
+    { IDM_LANG_XML, L"XML(&X)", L"XML(&X)" },
+    { IDM_LANG_CSS, L"CSS(&C)", L"CSS(&C)" },
+    { IDM_LANG_JSON, L"JSON(&N)", L"JSON(&N)" },
+    { IDM_LANG_SQL, L"SQL(&Q)", L"SQL(&Q)" },
+    { IDM_LANG_BASH, L"Bash/Shell(&B)", L"Bash/Shell(&B)" },
+    { IDM_LANG_POWERSHELL, L"PowerShell(&O)", L"PowerShell(&O)" },
+    { IDM_LANG_RUST, L"Rust(&R)", L"Rust(&R)" },
+    { IDM_LANG_LUA, L"Lua(&U)", L"Lua(&U)" },
+    { IDM_LANG_RUBY, L"Ruby(&G)", L"Ruby(&G)" },
+    { IDM_LANG_MARKDOWN, L"Markdown(&M)", L"Markdown(&M)" },
+    { IDM_LANG_YAML, L"YAML(&L)", L"YAML(&L)" },
+    { IDM_LANG_TOML, L"TOML(&K)", L"TOML(&K)" },
+    { IDM_LANG_PROPERTIES, L"INI/Properties(&I)", L"INI/Properties(&I)" },
+    { IDM_LANG_MAKEFILE, L"Makefile(&F)", L"Makefile(&F)" },
+    { IDM_LANG_DIFF, L"Diff/Patch(&D)", L"Diff/Patch(&D)" },
+    { IDM_LANG_BATCH, L"Batch/CMD(&B)", L"Batch/CMD(&B)" },
+    { IDM_LANG_ZIG, L"Zig(&Z)", L"Zig(&Z)" },
+    { IDM_LANG_NIM, L"Nim(&N)", L"Nim(&N)" },
+    { IDM_LANG_REGISTRY, L"Registry(&E)", L"Registry(&E)" },
+    { IDM_LANG_INNO, L"Inno Setup(&P)", L"Inno Setup(&P)" },
+} };
+
+const std::array<LanguageMenuGroup, 4> kLanguageMenuGroups = { {
+    { L"A-F", L'A', L'F' },
+    { L"G-M", L'G', L'M' },
+    { L"N-S", L'N', L'S' },
+    { L"T-Z", L'T', L'Z' },
+} };
+
+std::wstring LanguageMenuDisplayText(const LanguageMenuLabel& label)
+{
+    return StripMenuMnemonic(UiText(label.chinese, label.english));
+}
+
+std::wstring LanguageMenuSortText(const LanguageMenuLabel& label)
+{
+    return StripMenuMnemonic(label.english);
+}
+
+wchar_t LanguageMenuSortLetter(const LanguageMenuLabel& label)
+{
+    const std::wstring sortText = LanguageMenuSortText(label);
+    for (wchar_t ch : sortText)
+    {
+        if (iswalpha(ch))
+            return static_cast<wchar_t>(towupper(ch));
+    }
+    return L'#';
+}
+
+bool LanguageBelongsToGroup(const LanguageMenuLabel& label, const LanguageMenuGroup& group)
+{
+    const wchar_t firstLetter = LanguageMenuSortLetter(label);
+    return firstLetter >= group.firstLetter && firstLetter <= group.lastLetter;
+}
+
+void ClearMenuItems(HMENU menu)
+{
+    if (!menu)
+        return;
+
+    while (GetMenuItemCount(menu) > 0)
+        DeleteMenu(menu, 0, MF_BYPOSITION);
+}
+
+std::vector<const LanguageMenuLabel*> GetSortedLanguageMenuLabels()
+{
+    std::vector<const LanguageMenuLabel*> labels;
+    labels.reserve(kLanguageMenuLabels.size());
+    for (const LanguageMenuLabel& label : kLanguageMenuLabels)
+        labels.push_back(&label);
+
+    std::sort(labels.begin(), labels.end(), [](const LanguageMenuLabel* left, const LanguageMenuLabel* right) {
+        const std::wstring leftText = LanguageMenuSortText(*left);
+        const std::wstring rightText = LanguageMenuSortText(*right);
+        return CompareStringOrdinal(leftText.c_str(), -1, rightText.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+    });
+
+    return labels;
+}
+
+void RebuildLanguageMenuItems(HMENU syntaxMenu)
+{
+    if (!syntaxMenu)
+        return;
+
+    ClearMenuItems(syntaxMenu);
+
+    const std::vector<const LanguageMenuLabel*> labels = GetSortedLanguageMenuLabels();
+    for (const LanguageMenuGroup& group : kLanguageMenuGroups)
+    {
+        HMENU groupMenu = CreatePopupMenu();
+        if (!groupMenu)
+            continue;
+
+        for (const LanguageMenuLabel* label : labels)
+        {
+            if (!LanguageBelongsToGroup(*label, group))
+                continue;
+
+            const std::wstring displayText = LanguageMenuDisplayText(*label);
+            AppendMenuW(groupMenu, MF_STRING, label->commandId,
+                displayText.c_str());
+        }
+
+        if (GetMenuItemCount(groupMenu) == 0)
+        {
+            DestroyMenu(groupMenu);
+            continue;
+        }
+
+        AppendMenuW(syntaxMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(groupMenu), group.title);
+    }
 }
 
 int FindSubMenuIndex(HMENU menu, HMENU submenu)
@@ -1132,7 +1385,8 @@ void SetTopMenuText(HMENU menu, int index, const wchar_t* text)
     if (!submenu)
         return;
 
-    ModifyMenuW(menu, index, MF_BYPOSITION | MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), text);
+    const std::wstring displayText = StripMenuMnemonic(text ? text : L"");
+    ModifyMenuW(menu, index, MF_BYPOSITION | MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), displayText.c_str());
 }
 
 void EnsureSettingsMenu(HMENU menu)
@@ -1150,23 +1404,33 @@ void EnsureSettingsMenu(HMENU menu)
             return;
 
         const int insertIndex = (std::max)(0, GetMenuItemCount(menu) - 1);
+        const std::wstring settingsText = StripMenuMnemonic(UiText(L"\u8BBE\u7F6E(&T)", L"Settings(&T)"));
         InsertMenuW(menu, insertIndex, MF_BYPOSITION | MF_POPUP,
             reinterpret_cast<UINT_PTR>(g_hSettingsMenu),
-            UiText(L"\u8BBE\u7F6E(&T)", L"Settings(&T)"));
+            settingsText.c_str());
     }
 
     if (GetMenuItemCount(g_hSettingsMenu) == 0)
+    {
+        const std::wstring preferencesText = StripMenuMnemonic(UiText(L"\u8BBE\u7F6E(&P)...", L"Preferences(&P)..."));
         AppendMenuW(g_hSettingsMenu, MF_STRING, IDM_SETTINGS_OPEN,
-            UiText(L"\u8BBE\u7F6E(&P)...", L"Preferences(&P)..."));
+            preferencesText.c_str());
+    }
     else
+    {
+        const std::wstring preferencesText = StripMenuMnemonic(UiText(L"\u8BBE\u7F6E(&P)...", L"Preferences(&P)..."));
         ModifyMenuW(g_hSettingsMenu, IDM_SETTINGS_OPEN, MF_BYCOMMAND | MF_STRING,
-            IDM_SETTINGS_OPEN, UiText(L"\u8BBE\u7F6E(&P)...", L"Preferences(&P)..."));
+            IDM_SETTINGS_OPEN, preferencesText.c_str());
+    }
 
     const int settingsIndex = FindSubMenuIndex(menu, g_hSettingsMenu);
     if (settingsIndex >= 0)
+    {
+        const std::wstring settingsText = StripMenuMnemonic(UiText(L"\u8BBE\u7F6E(&T)", L"Settings(&T)"));
         ModifyMenuW(menu, settingsIndex, MF_BYPOSITION | MF_POPUP,
             reinterpret_cast<UINT_PTR>(g_hSettingsMenu),
-            UiText(L"\u8BBE\u7F6E(&T)", L"Settings(&T)"));
+            settingsText.c_str());
+    }
 }
 
 void UpdateMainMenuText()
@@ -1216,9 +1480,12 @@ void UpdateMainMenuText()
     HMENU viewMenu = GetSubMenu(menu, kViewMenuIndex);
     HMENU symbolMenu = viewMenu ? GetSubMenu(viewMenu, 0) : nullptr;
     if (viewMenu && symbolMenu)
+    {
+        const std::wstring symbolMenuText = StripMenuMnemonic(UiText(L"\u67E5\u770B\u7B26\u53F7(&S)", L"Symbols(&S)"));
         ModifyMenuW(viewMenu, 0, MF_BYPOSITION | MF_POPUP,
             reinterpret_cast<UINT_PTR>(symbolMenu),
-            UiText(L"\u67E5\u770B\u7B26\u53F7(&S)", L"Symbols(&S)"));
+            symbolMenuText.c_str());
+    }
     SetMenuText(symbolMenu, IDM_VIEW_SHOW_SPACE_TAB, UiText(L"\u663E\u793A\u7A7A\u683C\u548C\u5236\u8868\u7B26(&S)", L"Show Space and Tab(&S)"));
     SetMenuText(symbolMenu, IDM_VIEW_SHOW_EOL, UiText(L"\u663E\u793A\u884C\u5C3E\u7B26(&E)", L"Show End of Line(&E)"));
     SetMenuText(symbolMenu, IDM_VIEW_SHOW_ALL_CHARS, UiText(L"\u663E\u793A\u6240\u6709\u5B57\u7B26(&A)", L"Show All Characters(&A)"));
@@ -1226,7 +1493,7 @@ void UpdateMainMenuText()
     SetMenuText(viewMenu, IDM_VIEW_TOGGLE_FOLDER, UiText(L"\u663E\u793A/\u9690\u85CF\u6587\u4EF6\u5939(&F)", L"Show/Hide Folder(&F)"));
 
     HMENU syntaxMenu = GetSubMenu(menu, kLanguageMenuIndex);
-    SetMenuText(syntaxMenu, IDM_LANG_TEXT, UiText(L"\u7EAF\u6587\u672C(&T)", L"Plain Text(&T)"));
+    RebuildLanguageMenuItems(syntaxMenu);
 
     HMENU helpMenu = GetSubMenu(menu, helpIndex);
     SetMenuText(helpMenu, IDM_ABOUT, UiText(L"\u5173\u4E8E(&A)...", L"About(&A)..."));
@@ -1609,6 +1876,121 @@ void ApplyMarkdownStyles()
     SetStyleFore({ SCE_MARKDOWN_STRIKEOUT }, ThemeLineNumber());
 }
 
+void ApplyYamlStyles()
+{
+    SetStyleFore({ SCE_YAML_COMMENT }, ThemeComment());
+    SetStyleFore({ SCE_YAML_IDENTIFIER }, ThemeVariable());
+    SetStyleFore({ SCE_YAML_KEYWORD }, ThemeKeyword());
+    SetStyleFore({ SCE_YAML_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_YAML_REFERENCE, SCE_YAML_DOCUMENT }, ThemeControlKeyword());
+    SetStyleFore({ SCE_YAML_TEXT }, ThemeString());
+    SetStyleFore({ SCE_YAML_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_YAML_ERROR }, ThemeError());
+}
+
+void ApplyTomlStyles()
+{
+    SetStyleFore({ SCE_TOML_COMMENT }, ThemeComment());
+    SetStyleFore({ SCE_TOML_IDENTIFIER, SCE_TOML_KEY }, ThemeVariable());
+    SetStyleFore({ SCE_TOML_KEYWORD }, ThemeKeyword());
+    SetStyleFore({ SCE_TOML_NUMBER, SCE_TOML_DATETIME }, ThemeNumber());
+    SetStyleFore({ SCE_TOML_TABLE }, ThemeType());
+    SetStyleFore({ SCE_TOML_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_TOML_STRING_SQ, SCE_TOML_STRING_DQ,
+        SCE_TOML_TRIPLE_STRING_SQ, SCE_TOML_TRIPLE_STRING_DQ }, ThemeString());
+    SetStyleFore({ SCE_TOML_ESCAPECHAR }, ThemeEscape());
+    SetStyleFore({ SCE_TOML_ERROR, SCE_TOML_STRINGEOL }, ThemeError());
+}
+
+void ApplyPropertiesStyles()
+{
+    SetStyleFore({ SCE_PROPS_COMMENT }, ThemeComment());
+    SetStyleFore({ SCE_PROPS_SECTION }, ThemeType());
+    SetStyleFore({ SCE_PROPS_ASSIGNMENT }, ThemeOperator());
+    SetStyleFore({ SCE_PROPS_DEFVAL }, ThemeString());
+    SetStyleFore({ SCE_PROPS_KEY }, ThemeVariable());
+}
+
+void ApplyMakefileStyles()
+{
+    SetStyleFore({ SCE_MAKE_COMMENT }, ThemeComment());
+    SetStyleFore({ SCE_MAKE_PREPROCESSOR }, ThemeControlKeyword());
+    SetStyleFore({ SCE_MAKE_IDENTIFIER }, ThemeVariable());
+    SetStyleFore({ SCE_MAKE_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_MAKE_TARGET }, ThemeFunction());
+    SetStyleFore({ SCE_MAKE_IDEOL }, ThemeError());
+}
+
+void ApplyDiffStyles()
+{
+    SetStyleFore({ SCE_DIFF_COMMENT, SCE_DIFF_HEADER, SCE_DIFF_POSITION }, ThemeControlKeyword());
+    SetStyleFore({ SCE_DIFF_COMMAND }, ThemeKeyword());
+    SetStyleFore({ SCE_DIFF_ADDED, SCE_DIFF_PATCH_ADD }, ThemeComment());
+    SetStyleFore({ SCE_DIFF_DELETED, SCE_DIFF_PATCH_DELETE }, ThemeError());
+    SetStyleFore({ SCE_DIFF_CHANGED }, ThemeNumber());
+    SetStyleFore({ SCE_DIFF_REMOVED_PATCH_ADD, SCE_DIFF_REMOVED_PATCH_DELETE }, ThemeLineNumber());
+}
+
+void ApplyBatchStyles()
+{
+    SetStyleFore({ SCE_BAT_COMMENT }, ThemeComment());
+    SetStyleFore({ SCE_BAT_WORD, SCE_BAT_COMMAND }, ThemeKeyword());
+    SetStyleFore({ SCE_BAT_LABEL, SCE_BAT_AFTER_LABEL }, ThemeFunction());
+    SetStyleFore({ SCE_BAT_IDENTIFIER }, ThemeVariable());
+    SetStyleFore({ SCE_BAT_OPERATOR }, ThemeOperator());
+}
+
+void ApplyZigStyles()
+{
+    SetStyleFore({ SCE_ZIG_COMMENTLINE, SCE_ZIG_COMMENTLINEDOC, SCE_ZIG_COMMENTLINETOP }, ThemeComment());
+    SetStyleFore({ SCE_ZIG_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_ZIG_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_ZIG_CHARACTER, SCE_ZIG_STRING, SCE_ZIG_MULTISTRING,
+        SCE_ZIG_IDENTIFIER_STRING }, ThemeString());
+    SetStyleFore({ SCE_ZIG_ESCAPECHAR }, ThemeEscape());
+    SetStyleFore({ SCE_ZIG_FUNCTION }, ThemeFunction());
+    SetStyleFore({ SCE_ZIG_BUILTIN_FUNCTION }, ThemeControlKeyword());
+    SetStyleFore({ SCE_ZIG_KW_PRIMARY, SCE_ZIG_KW_SECONDARY, SCE_ZIG_KW_TERTIARY }, ThemeKeyword());
+    SetStyleFore({ SCE_ZIG_KW_TYPE }, ThemeType());
+    SetStyleFore({ SCE_ZIG_STRINGEOL }, ThemeError());
+}
+
+void ApplyNimStyles()
+{
+    SetStyleFore({ SCE_NIM_COMMENT, SCE_NIM_COMMENTDOC, SCE_NIM_COMMENTLINE,
+        SCE_NIM_COMMENTLINEDOC }, ThemeComment());
+    SetStyleFore({ SCE_NIM_WORD }, ThemeKeyword());
+    SetStyleFore({ SCE_NIM_NUMBER }, ThemeNumber());
+    SetStyleFore({ SCE_NIM_STRING, SCE_NIM_CHARACTER, SCE_NIM_TRIPLE,
+        SCE_NIM_TRIPLEDOUBLE, SCE_NIM_BACKTICKS }, ThemeString());
+    SetStyleFore({ SCE_NIM_FUNCNAME }, ThemeFunction());
+    SetStyleFore({ SCE_NIM_OPERATOR }, ThemeOperator());
+    SetStyleFore({ SCE_NIM_STRINGEOL, SCE_NIM_NUMERROR }, ThemeError());
+}
+
+void ApplyRegistryStyles()
+{
+    SetStyleFore({ SCE_REG_COMMENT }, ThemeComment());
+    SetStyleFore({ SCE_REG_VALUENAME, SCE_REG_PARAMETER }, ThemeVariable());
+    SetStyleFore({ SCE_REG_STRING, SCE_REG_STRING_GUID }, ThemeString());
+    SetStyleFore({ SCE_REG_HEXDIGIT }, ThemeNumber());
+    SetStyleFore({ SCE_REG_VALUETYPE }, ThemeKeyword());
+    SetStyleFore({ SCE_REG_ADDEDKEY, SCE_REG_KEYPATH_GUID }, ThemeType());
+    SetStyleFore({ SCE_REG_DELETEDKEY }, ThemeError());
+    SetStyleFore({ SCE_REG_ESCAPED }, ThemeEscape());
+    SetStyleFore({ SCE_REG_OPERATOR }, ThemeOperator());
+}
+
+void ApplyInnoStyles()
+{
+    SetStyleFore({ SCE_INNO_COMMENT, SCE_INNO_COMMENT_PASCAL }, ThemeComment());
+    SetStyleFore({ SCE_INNO_KEYWORD, SCE_INNO_KEYWORD_PASCAL, SCE_INNO_KEYWORD_USER }, ThemeKeyword());
+    SetStyleFore({ SCE_INNO_PARAMETER, SCE_INNO_INLINE_EXPANSION }, ThemeVariable());
+    SetStyleFore({ SCE_INNO_SECTION }, ThemeType());
+    SetStyleFore({ SCE_INNO_PREPROC }, ThemeControlKeyword());
+    SetStyleFore({ SCE_INNO_STRING_DOUBLE, SCE_INNO_STRING_SINGLE }, ThemeString());
+}
+
 void ApplySyntaxFamilyStyles(SyntaxFamily family)
 {
     switch (family)
@@ -1649,9 +2031,63 @@ void ApplySyntaxFamilyStyles(SyntaxFamily family)
     case SyntaxFamily::Markdown:
         ApplyMarkdownStyles();
         break;
+    case SyntaxFamily::Yaml:
+        ApplyYamlStyles();
+        break;
+    case SyntaxFamily::Toml:
+        ApplyTomlStyles();
+        break;
+    case SyntaxFamily::Properties:
+        ApplyPropertiesStyles();
+        break;
+    case SyntaxFamily::Makefile:
+        ApplyMakefileStyles();
+        break;
+    case SyntaxFamily::Diff:
+        ApplyDiffStyles();
+        break;
+    case SyntaxFamily::Batch:
+        ApplyBatchStyles();
+        break;
+    case SyntaxFamily::Zig:
+        ApplyZigStyles();
+        break;
+    case SyntaxFamily::Nim:
+        ApplyNimStyles();
+        break;
+    case SyntaxFamily::Registry:
+        ApplyRegistryStyles();
+        break;
+    case SyntaxFamily::Inno:
+        ApplyInnoStyles();
+        break;
     case SyntaxFamily::Plain:
     default:
         break;
+    }
+}
+
+void UpdateLanguageMenuCheckRecursive(HMENU menu)
+{
+    if (!menu)
+        return;
+
+    const int itemCount = GetMenuItemCount(menu);
+    for (int index = 0; index < itemCount; ++index)
+    {
+        HMENU submenu = GetSubMenu(menu, index);
+        if (submenu)
+        {
+            UpdateLanguageMenuCheckRecursive(submenu);
+            continue;
+        }
+
+        const UINT commandId = GetMenuItemID(menu, index);
+        if (commandId == static_cast<UINT>(-1) || !IsLanguageCommand(static_cast<int>(commandId)))
+            continue;
+
+        CheckMenuItem(menu, index, MF_BYPOSITION |
+            (static_cast<int>(commandId) == g_currentLanguageCommand ? MF_CHECKED : MF_UNCHECKED));
     }
 }
 
@@ -1665,7 +2101,7 @@ void UpdateLanguageMenuCheck()
     if (!hLanguageMenu)
         return;
 
-    CheckMenuRadioItem(hLanguageMenu, IDM_LANG_TEXT, IDM_LANG_MARKDOWN, g_currentLanguageCommand, MF_BYCOMMAND);
+    UpdateLanguageMenuCheckRecursive(hLanguageMenu);
     DrawMenuBar(hWnd);
 }
 
@@ -1735,10 +2171,11 @@ void ApplyAppTheme()
     ApplyWindowChromeTheme(hWnd);
     ApplyMainMenuTheme();
 
-    if (g_hFolderTree)
+    if (g_hFolderTree || g_hOpenFilesTree)
     {
         ApplyFolderTreeTheme();
         InitializeFolderTreeImageList();
+        InvalidateOpenFilesTree();
         InvalidateFolderTree();
     }
 
@@ -1795,6 +2232,9 @@ std::wstring ExtensionFromPath(const std::wstring& path)
 int DetectLanguageFromPath(const std::wstring& path)
 {
     const std::wstring ext = ExtensionFromPath(path);
+    const std::wstring name = ToLower(FileNameFromPath(path));
+    if (name == L"makefile" || name == L"gnumakefile")
+        return IDM_LANG_MAKEFILE;
     if (ext == L".c" || ext == L".cc" || ext == L".cpp" || ext == L".cxx" ||
         ext == L".h" || ext == L".hh" || ext == L".hpp" || ext == L".hxx")
         return IDM_LANG_CPP;
@@ -1830,6 +2270,27 @@ int DetectLanguageFromPath(const std::wstring& path)
         return IDM_LANG_RUBY;
     if (ext == L".md" || ext == L".markdown")
         return IDM_LANG_MARKDOWN;
+    if (ext == L".yaml" || ext == L".yml")
+        return IDM_LANG_YAML;
+    if (ext == L".toml")
+        return IDM_LANG_TOML;
+    if (ext == L".ini" || ext == L".properties" || ext == L".props" ||
+        ext == L".conf" || ext == L".env" || name == L".editorconfig")
+        return IDM_LANG_PROPERTIES;
+    if (ext == L".mk" || ext == L".mak")
+        return IDM_LANG_MAKEFILE;
+    if (ext == L".diff" || ext == L".patch")
+        return IDM_LANG_DIFF;
+    if (ext == L".bat" || ext == L".cmd")
+        return IDM_LANG_BATCH;
+    if (ext == L".zig")
+        return IDM_LANG_ZIG;
+    if (ext == L".nim" || ext == L".nims")
+        return IDM_LANG_NIM;
+    if (ext == L".reg")
+        return IDM_LANG_REGISTRY;
+    if (ext == L".iss")
+        return IDM_LANG_INNO;
     return IDM_LANG_TEXT;
 }
 
@@ -2608,6 +3069,7 @@ void SetActiveTabModified(bool modified)
 
     tab.modified = modified;
     InvalidateTabBar();
+    RefreshOpenFilesTree();
     InvalidateStatusBar();
 }
 
@@ -2627,6 +3089,112 @@ std::wstring GetTabTooltipText(int tabIndex)
 
     const DocumentTab& tab = g_tabs[tabIndex];
     return tab.path.empty() ? GetTabDisplayTitle(tab) : FileNameFromPath(tab.path);
+}
+
+bool ShouldShowTabInOpenFilesTree(const DocumentTab& tab)
+{
+    return !tab.untitled && !tab.path.empty() && !tab.openedFromFolder;
+}
+
+bool HasOpenFilesTreeTabs()
+{
+    for (const DocumentTab& tab : g_tabs)
+    {
+        if (ShouldShowTabInOpenFilesTree(tab))
+            return true;
+    }
+    return false;
+}
+
+OpenFileItem* StoreOpenFileItem(int tabIndex, std::wstring title)
+{
+    auto item = std::make_unique<OpenFileItem>();
+    item->tabIndex = tabIndex;
+    item->title = std::move(title);
+    OpenFileItem* itemData = item.get();
+    g_openFileItems.push_back(std::move(item));
+    return itemData;
+}
+
+OpenFileItem* GetOpenFileItemData(HTREEITEM treeItem)
+{
+    if (!g_hOpenFilesTree || !treeItem)
+        return nullptr;
+
+    TVITEMW item{};
+    item.mask = TVIF_PARAM;
+    item.hItem = treeItem;
+    if (!TreeView_GetItem(g_hOpenFilesTree, &item))
+        return nullptr;
+    return reinterpret_cast<OpenFileItem*>(item.lParam);
+}
+
+HTREEITEM InsertOpenFilesTreeItem(int tabIndex)
+{
+    if (tabIndex < 0 || tabIndex >= static_cast<int>(g_tabs.size()))
+        return nullptr;
+
+    std::wstring title = GetTabDisplayTitle(g_tabs[tabIndex]);
+    if (GetTabModifiedState(tabIndex))
+        title += L" *";
+
+    OpenFileItem* itemData = StoreOpenFileItem(tabIndex, title);
+    TVINSERTSTRUCTW insert{};
+    insert.hParent = TVI_ROOT;
+    insert.hInsertAfter = TVI_LAST;
+    insert.item.mask = TVIF_TEXT | TVIF_IMAGE | TVIF_SELECTEDIMAGE | TVIF_PARAM;
+    insert.item.pszText = const_cast<LPWSTR>(itemData->title.c_str());
+    insert.item.iImage = g_textFileIconIndex;
+    insert.item.iSelectedImage = g_textFileIconIndex;
+    insert.item.lParam = reinterpret_cast<LPARAM>(itemData);
+
+    return TreeView_InsertItem(g_hOpenFilesTree, &insert);
+}
+
+void RefreshOpenFilesTree()
+{
+    if (!g_hOpenFilesTree)
+        return;
+
+    ScopedRedrawPause redrawPause(g_hOpenFilesTree);
+    TreeView_DeleteAllItems(g_hOpenFilesTree);
+    g_openFileItems.clear();
+
+    HTREEITEM activeItem = nullptr;
+    for (int index = 0; index < static_cast<int>(g_tabs.size()); ++index)
+    {
+        if (!ShouldShowTabInOpenFilesTree(g_tabs[index]))
+            continue;
+
+        HTREEITEM item = InsertOpenFilesTreeItem(index);
+        if (index == g_activeTabIndex)
+            activeItem = item;
+    }
+
+    TreeView_SelectItem(g_hOpenFilesTree, activeItem);
+}
+
+bool HandleOpenFilesTreeItemClickAt(POINT clientPoint)
+{
+    if (!g_hOpenFilesTree)
+        return false;
+
+    TVHITTESTINFO hitTest{};
+    hitTest.pt = clientPoint;
+    HTREEITEM clicked = TreeView_HitTest(g_hOpenFilesTree, &hitTest);
+    if (!clicked)
+        return false;
+
+    if ((hitTest.flags & (TVHT_ONITEMICON | TVHT_ONITEMLABEL)) == 0)
+        return false;
+
+    TreeView_SelectItem(g_hOpenFilesTree, clicked);
+    OpenFileItem* item = GetOpenFileItemData(clicked);
+    if (!item || item->tabIndex < 0 || item->tabIndex >= static_cast<int>(g_tabs.size()))
+        return true;
+
+    SwitchToTab(item->tabIndex);
+    return true;
 }
 
 void CaptureActiveTab()
@@ -2707,6 +3275,7 @@ void LoadTabIntoEditor(int tabIndex)
 
     UpdateWindowTitle();
     InvalidateTabBar();
+    RefreshOpenFilesTree();
     InvalidateStatusBar();
     SetFocus(g_hSci);
 }
@@ -2797,6 +3366,7 @@ void RemoveEmptyUntitledTabs()
     {
         UpdateWindowTitle();
         InvalidateTabBar();
+        RefreshOpenFilesTree();
         InvalidateStatusBar();
     }
 }
@@ -2831,6 +3401,25 @@ int GetEffectiveFolderPaneWidth()
     return ClampFolderPaneWidth(g_folderPaneWidth, clientRect.right - clientRect.left);
 }
 
+int ClampOpenFilesPaneHeight(int requestedHeight, int contentHeight)
+{
+    if (contentHeight <= kFolderPaneSectionDividerHeight)
+        return (std::max)(0, contentHeight);
+
+    const int minUpper = (std::min)(kFolderPaneSectionMinHeight,
+        (std::max)(0, contentHeight - kFolderPaneSectionDividerHeight));
+    const int remainingAfterUpperMin = (std::max)(0, contentHeight - kFolderPaneSectionDividerHeight - minUpper);
+    const int minLower = (std::min)(kFolderPaneSectionMinHeight, remainingAfterUpperMin);
+    const int maxUpper = (std::max)(minUpper,
+        (std::min)(kFolderPaneOpenFilesMaxHeight, contentHeight - kFolderPaneSectionDividerHeight - minLower));
+    return (std::min)((std::max)(requestedHeight, minUpper), maxUpper);
+}
+
+int GetEffectiveOpenFilesPaneHeight(int contentHeight)
+{
+    return ClampOpenFilesPaneHeight(g_openFilesPaneHeight, contentHeight);
+}
+
 RECT GetFolderSplitterRect()
 {
     RECT clientRect{};
@@ -2845,9 +3434,30 @@ RECT GetFolderSplitterRect()
     return RECT{ paneWidth, 0, paneWidth + kFolderPaneDividerWidth, bottom };
 }
 
+RECT GetFolderSectionSplitterRect()
+{
+    RECT clientRect{};
+    GetClientRect(hWnd, &clientRect);
+
+    const int paneWidth = GetEffectiveFolderPaneWidth();
+    if (!g_folderPaneVisible || paneWidth <= 0)
+        return RECT{ 0, 0, 0, 0 };
+
+    const int clientHeight = static_cast<int>(clientRect.bottom - clientRect.top);
+    const int contentHeight = (std::max)(0, clientHeight - kStatusBarHeight);
+    const int openFilesHeight = GetEffectiveOpenFilesPaneHeight(contentHeight);
+    return RECT{ 0, openFilesHeight, paneWidth, openFilesHeight + kFolderPaneSectionDividerHeight };
+}
+
 bool IsPointOnFolderSplitter(POINT point)
 {
     RECT splitterRect = GetFolderSplitterRect();
+    return !IsRectEmpty(&splitterRect) && PtInRect(&splitterRect, point);
+}
+
+bool IsPointOnFolderSectionSplitter(POINT point)
+{
+    RECT splitterRect = GetFolderSectionSplitterRect();
     return !IsRectEmpty(&splitterRect) && PtInRect(&splitterRect, point);
 }
 
@@ -2936,6 +3546,70 @@ void DrawFolderSplitter(HDC hdc)
     DeleteObject(linePen);
 }
 
+void DrawFolderPaneHeader(HDC hdc, const RECT& headerRect, const wchar_t* title)
+{
+    if (IsRectEmpty(&headerRect))
+        return;
+
+    HBRUSH background = CreateSolidBrush(ThemeFolderPaneBack());
+    FillRect(hdc, &headerRect, background);
+    DeleteObject(background);
+
+    HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    HGDIOBJ oldFont = SelectObject(hdc, font);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, ThemeFolderPaneText());
+
+    RECT textRect = headerRect;
+    textRect.left += kFolderPaneHeaderTextInset;
+    textRect.right -= kFolderPaneHeaderTextInset;
+    DrawTextW(hdc, title, -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    SelectObject(hdc, oldFont);
+
+    HPEN linePen = CreatePen(PS_SOLID, 1, ThemeFolderPaneLine());
+    HGDIOBJ oldPen = SelectObject(hdc, linePen);
+    MoveToEx(hdc, headerRect.left, headerRect.bottom - 1, nullptr);
+    LineTo(hdc, headerRect.right, headerRect.bottom - 1);
+    SelectObject(hdc, oldPen);
+    DeleteObject(linePen);
+}
+
+void DrawFolderSectionSplitter(HDC hdc)
+{
+    RECT splitterRect = GetFolderSectionSplitterRect();
+    if (IsRectEmpty(&splitterRect))
+        return;
+
+    HBRUSH background = CreateSolidBrush(ThemeFolderPaneBack());
+    FillRect(hdc, &splitterRect, background);
+    DeleteObject(background);
+
+    const int centerY = splitterRect.top + (kFolderPaneSectionDividerHeight / 2);
+    HPEN linePen = CreatePen(PS_SOLID, 1, ThemeFolderPaneLine());
+    HGDIOBJ oldPen = SelectObject(hdc, linePen);
+    MoveToEx(hdc, splitterRect.left, centerY, nullptr);
+    LineTo(hdc, splitterRect.right, centerY);
+    SelectObject(hdc, oldPen);
+    DeleteObject(linePen);
+}
+
+void DrawFolderPaneDecorations(HDC hdc, int paneWidth, int contentHeight)
+{
+    if (paneWidth <= 0 || contentHeight <= 0)
+        return;
+
+    const int openFilesHeight = GetEffectiveOpenFilesPaneHeight(contentHeight);
+    RECT openHeader{ 0, 0, paneWidth, (std::min)(kFolderPaneHeaderHeight, openFilesHeight) };
+    DrawFolderPaneHeader(hdc, openHeader, UiText(L"\u6253\u5F00\u7684\u6587\u4EF6", L"Open Files"));
+    DrawFolderSectionSplitter(hdc);
+
+    const int folderHeaderTop = (std::min)(contentHeight,
+        openFilesHeight + kFolderPaneSectionDividerHeight);
+    RECT folderHeader{ 0, folderHeaderTop, paneWidth,
+        (std::min)(contentHeight, folderHeaderTop + kFolderPaneHeaderHeight) };
+    DrawFolderPaneHeader(hdc, folderHeader, UiText(L"\u6253\u5F00\u7684\u6587\u4EF6\u5939", L"Open Folders"));
+}
+
 void FillMainClientBackground(HDC hdc)
 {
     if (!hdc || !hWnd)
@@ -2955,6 +3629,7 @@ void FillMainClientBackground(HDC hdc)
         HBRUSH folderBrush = CreateSolidBrush(ThemeFolderPaneBack());
         FillRect(hdc, &folderRect, folderBrush);
         DeleteObject(folderBrush);
+        DrawFolderPaneDecorations(hdc, paneWidth, contentBottom);
     }
 
     if (editorX < clientRect.right)
@@ -2987,11 +3662,23 @@ void LayoutChildWindows()
     const int paneWidth = GetEffectiveFolderPaneWidth();
     const int editorX = paneWidth > 0 ? paneWidth + kFolderPaneDividerWidth : 0;
     const int editorWidth = (std::max)(0, width - editorX);
+    const int openFilesHeight = GetEffectiveOpenFilesPaneHeight(contentHeight);
+    const int openFilesTreeTop = (std::min)(contentHeight, kFolderPaneHeaderHeight);
+    const int openFilesTreeHeight = (std::max)(0, openFilesHeight - openFilesTreeTop);
+    const int folderHeaderTop = (std::min)(contentHeight, openFilesHeight + kFolderPaneSectionDividerHeight);
+    const int folderTreeTop = (std::min)(contentHeight, folderHeaderTop + kFolderPaneHeaderHeight);
+    const int folderTreeHeight = (std::max)(0, contentHeight - folderTreeTop);
+
+    if (g_hOpenFilesTree)
+    {
+        ShowWindow(g_hOpenFilesTree, g_folderPaneVisible ? SW_SHOW : SW_HIDE);
+        MoveWindow(g_hOpenFilesTree, 0, openFilesTreeTop, paneWidth, openFilesTreeHeight, TRUE);
+    }
 
     if (g_hFolderTree)
     {
         ShowWindow(g_hFolderTree, g_folderPaneVisible ? SW_SHOW : SW_HIDE);
-        MoveWindow(g_hFolderTree, 0, 0, paneWidth, contentHeight, TRUE);
+        MoveWindow(g_hFolderTree, 0, folderTreeTop, paneWidth, folderTreeHeight, TRUE);
     }
 
     if (g_hTabBar)
@@ -3078,7 +3765,7 @@ void ClearFolderPane()
     g_restoreFolderInSession = false;
     if (g_hFolderTree)
         TreeView_DeleteAllItems(g_hFolderTree);
-    SetFolderPaneVisible(false);
+    SetFolderPaneVisible(HasOpenFilesTreeTabs());
     UpdateWindowTitle();
 }
 
@@ -3279,7 +3966,7 @@ std::wstring PickSaveFilePath(HWND owner)
     wchar_t fileName[MAX_PATH] = L"";
     static const wchar_t filter[] =
         L"Text Files (*.txt)\0*.txt\0"
-        L"Code Files\0*.cpp;*.h;*.cs;*.java;*.js;*.ts;*.py;*.html;*.css;*.json;*.sql;*.md\0"
+        L"Code Files\0*.cpp;*.h;*.cs;*.java;*.js;*.ts;*.py;*.html;*.css;*.json;*.sql;*.md;*.yaml;*.yml;*.toml;*.ini;*.properties;*.mk;*.diff;*.patch;*.bat;*.cmd;*.zig;*.nim;*.reg;*.iss\0"
         L"All Files (*.*)\0*.*\0\0";
 
     OPENFILENAMEW ofn{};
@@ -3317,7 +4004,10 @@ bool SaveCurrentFileAs()
         tab.modified = false;
         tab.untitled = false;
         InvalidateTabBar();
+        RefreshOpenFilesTree();
         InvalidateStatusBar();
+        if (!tab.openedFromFolder)
+            SetFolderPaneVisible(true);
     }
     UpdateWindowTitle();
     return true;
@@ -3343,6 +4033,7 @@ bool SaveCurrentFile()
         tab.modified = false;
         tab.untitled = false;
         InvalidateTabBar();
+        RefreshOpenFilesTree();
         InvalidateStatusBar();
     }
     UpdateWindowTitle();
@@ -3391,6 +4082,8 @@ void CloseTab(int tabIndex)
     {
         g_activeTabIndex = -1;
         AddDocumentTab(CreateDefaultUntitledTab());
+        if (g_currentFolderPath.empty() && !HasOpenFilesTreeTabs())
+            SetFolderPaneVisible(false);
         return;
     }
 
@@ -3405,7 +4098,11 @@ void CloseTab(int tabIndex)
         if (closingIndex < g_activeTabIndex)
             --g_activeTabIndex;
         InvalidateTabBar();
+        RefreshOpenFilesTree();
     }
+
+    if (g_currentFolderPath.empty() && !HasOpenFilesTreeTabs())
+        SetFolderPaneVisible(false);
 }
 
 bool PromptSaveAllTabs()
@@ -3451,24 +4148,34 @@ bool LoadDocumentTabFromFile(const std::wstring& path, DocumentTab& tab, bool sh
     return true;
 }
 
-bool LoadFileIntoEditor(const std::wstring& path)
+bool LoadFileIntoEditor(const std::wstring& path, bool openedFromFolder = false)
 {
     const int existingTab = FindOpenTabByPath(path);
     if (existingTab >= 0)
     {
+        if (!openedFromFolder && g_tabs[existingTab].openedFromFolder)
+        {
+            g_tabs[existingTab].openedFromFolder = false;
+            RefreshOpenFilesTree();
+        }
         SwitchToTab(existingTab);
         if (HasFileTabs())
             RemoveEmptyUntitledTabs();
+        if (!openedFromFolder)
+            SetFolderPaneVisible(true);
         return true;
     }
 
     DocumentTab tab;
     if (!LoadDocumentTabFromFile(path, tab, true))
         return false;
+    tab.openedFromFolder = openedFromFolder;
 
     AddDocumentTabReplacingDefaultBlank(std::move(tab));
     if (HasFileTabs())
         RemoveEmptyUntitledTabs();
+    if (!openedFromFolder)
+        SetFolderPaneVisible(true);
     return true;
 }
 
@@ -3476,7 +4183,7 @@ std::wstring PickOpenFilePath(HWND owner)
 {
     wchar_t fileName[MAX_PATH] = L"";
     static const wchar_t filter[] =
-        L"All Supported Files\0*.txt;*.cpp;*.h;*.cs;*.java;*.js;*.ts;*.py;*.html;*.css;*.json;*.sql;*.md;*.xml;*.sh;*.ps1;*.rs;*.lua;*.rb\0"
+        L"All Supported Files\0*.txt;*.cpp;*.h;*.cs;*.java;*.js;*.ts;*.py;*.html;*.css;*.json;*.sql;*.md;*.xml;*.sh;*.ps1;*.rs;*.lua;*.rb;*.yaml;*.yml;*.toml;*.ini;*.properties;*.mk;*.diff;*.patch;*.bat;*.cmd;*.zig;*.nim;*.reg;*.iss\0"
         L"All Files (*.*)\0*.*\0\0";
 
     OPENFILENAMEW ofn{};
@@ -3729,7 +4436,8 @@ bool SaveSessionState()
             session += EncodeSessionWideField(tab.sessionTempPath) + "\t";
             session += std::to_string(tab.languageCommand) + "\t";
             session += std::to_string(SessionEncodingToInt(DocumentEncoding::Utf8)) + "\t";
-            session += std::to_string(tab.eolMode) + "\n";
+            session += std::to_string(tab.eolMode) + "\t";
+            session += tab.openedFromFolder ? "1\n" : "0\n";
         }
         else if (!tab.path.empty())
         {
@@ -3738,7 +4446,8 @@ bool SaveSessionState()
             session += EncodeSessionWideField(tab.path) + "\t";
             session += std::to_string(tab.languageCommand) + "\t";
             session += std::to_string(SessionEncodingToInt(tab.encoding)) + "\t";
-            session += std::to_string(tab.eolMode) + "\n";
+            session += std::to_string(tab.eolMode) + "\t";
+            session += tab.openedFromFolder ? "1\n" : "0\n";
         }
     }
 
@@ -3795,6 +4504,7 @@ bool LoadStartupTabs()
                 const int languageCommand = ParseSessionInt(fields[4], IDM_LANG_TEXT);
                 const DocumentEncoding encoding = SessionEncodingFromInt(ParseSessionInt(fields[5], 0));
                 const int eolMode = ParseSessionInt(fields[6], SC_EOL_CRLF);
+                const bool openedFromFolder = fields.size() >= 8 && ParseSessionInt(fields[7], 0) != 0;
 
                 DocumentTab tab;
                 if (temporaryTab)
@@ -3817,6 +4527,7 @@ bool LoadStartupTabs()
                     tab.eolMode = eolMode;
                     tab.modified = false;
                     tab.untitled = true;
+                    tab.openedFromFolder = false;
                 }
                 else
                 {
@@ -3830,6 +4541,7 @@ bool LoadStartupTabs()
                     tab.eolMode = eolMode;
                     tab.modified = false;
                     tab.untitled = false;
+                    tab.openedFromFolder = openedFromFolder;
                 }
 
                 restoredTabs.push_back(std::move(tab));
@@ -3857,7 +4569,7 @@ bool LoadStartupTabs()
         g_currentFolderPath.clear();
         g_folderItems.clear();
         g_restoreFolderInSession = false;
-        SetFolderPaneVisible(false);
+        SetFolderPaneVisible(HasOpenFilesTreeTabs());
     }
     return true;
 }
@@ -4058,7 +4770,7 @@ int AddThemedFileIconToImageList(HIMAGELIST imageList, int iconWidth, int iconHe
 
 void InitializeFolderTreeImageList()
 {
-    if (!g_hFolderTree)
+    if (!g_hFolderTree && !g_hOpenFilesTree)
         return;
 
     const int iconWidth = GetSystemMetrics(SM_CXSMICON);
@@ -4079,7 +4791,10 @@ void InitializeFolderTreeImageList()
         return;
     }
 
-    TreeView_SetImageList(g_hFolderTree, imageList, TVSIL_NORMAL);
+    if (g_hFolderTree)
+        TreeView_SetImageList(g_hFolderTree, imageList, TVSIL_NORMAL);
+    if (g_hOpenFilesTree)
+        TreeView_SetImageList(g_hOpenFilesTree, imageList, TVSIL_NORMAL);
 
     if (g_hFolderTreeImageList)
         ImageList_Destroy(g_hFolderTreeImageList);
@@ -4145,6 +4860,39 @@ LRESULT CALLBACK FolderTreeWndProc(HWND treeWindow, UINT message, WPARAM wParam,
 
     return g_originalFolderTreeProc ?
         CallWindowProcW(g_originalFolderTreeProc, treeWindow, message, wParam, lParam) :
+        DefWindowProcW(treeWindow, message, wParam, lParam);
+}
+
+LRESULT CALLBACK OpenFilesTreeWndProc(HWND treeWindow, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_LBUTTONDBLCLK:
+    {
+        POINT clientPoint{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        HandleOpenFilesTreeItemClickAt(clientPoint);
+        return 0;
+    }
+
+    case WM_ERASEBKGND:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        RECT clientRect{};
+        GetClientRect(treeWindow, &clientRect);
+        HBRUSH brush = CreateSolidBrush(ThemeFolderPaneBack());
+        FillRect(hdc, &clientRect, brush);
+        DeleteObject(brush);
+        return 1;
+    }
+
+    case WM_THEMECHANGED:
+        ApplyFolderTreeTheme();
+        InvalidateOpenFilesTree();
+        break;
+    }
+
+    return g_originalOpenFilesTreeProc ?
+        CallWindowProcW(g_originalOpenFilesTreeProc, treeWindow, message, wParam, lParam) :
         DefWindowProcW(treeWindow, message, wParam, lParam);
 }
 
@@ -4342,12 +5090,7 @@ bool HandleFolderTreeItemClickAt(POINT clientPoint, bool doubleClick)
 
     if (hitTest.flags & TVHT_ONITEMBUTTON)
     {
-        if (doubleClick)
-        {
-            ToggleFolderTreeItem(clicked);
-            return true;
-        }
-        return false;
+        return doubleClick;
     }
 
     if ((hitTest.flags & (TVHT_ONITEMICON | TVHT_ONITEMLABEL)) == 0)
@@ -4368,7 +5111,7 @@ bool HandleFolderTreeItemClickAt(POINT clientPoint, bool doubleClick)
     }
 
     if (doubleClick)
-        LoadFileIntoEditor(item->path);
+        LoadFileIntoEditor(item->path, true);
     return true;
 }
 
@@ -4588,6 +5331,7 @@ void SetActiveDocumentEolMode(int eolMode)
         tab.text = GetEditorText();
         tab.modified = tab.text != tab.savedText;
         InvalidateTabBar();
+        RefreshOpenFilesTree();
     }
     InvalidateStatusBar();
 }
@@ -4630,6 +5374,12 @@ void InvalidateFolderTree()
 {
     if (g_hFolderTree)
         RedrawWindow(g_hFolderTree, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
+}
+
+void InvalidateOpenFilesTree()
+{
+    if (g_hOpenFilesTree)
+        RedrawWindow(g_hOpenFilesTree, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
 }
 
 void DrawRoundedPanel(HDC hdc, const RECT& rect, COLORREF fill, COLORREF border, int radius)
@@ -5197,7 +5947,7 @@ void InitializeAboutControls(HWND aboutWindow)
 
     CreateSettingsControl(aboutWindow, L"STATIC", L"openedit",
         SS_LEFTNOWORDWRAP, 78, 30, 220, 24, IDC_STATIC);
-    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.1", L"Version 1.0.1"),
+    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.2", L"Version 1.0.2"),
         SS_LEFTNOWORDWRAP, 78, 58, 220, 20, IDC_STATIC);
     SYSTEMTIME localTime{};
     GetLocalTime(&localTime);
@@ -5834,7 +6584,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_NOTIFY:
     {
         const NMHDR* header = reinterpret_cast<NMHDR*>(lParam);
-        if (header && header->hwndFrom == g_hFolderTree)
+        if (header && header->hwndFrom == g_hOpenFilesTree)
+        {
+            if (header->code == NM_CUSTOMDRAW)
+            {
+                return HandleFolderTreeCustomDraw(lParam);
+            }
+            else if (header->code == NM_CLICK)
+            {
+                DWORD cursorPosition = GetMessagePos();
+                POINT clientPoint{ GET_X_LPARAM(cursorPosition), GET_Y_LPARAM(cursorPosition) };
+                ScreenToClient(g_hOpenFilesTree, &clientPoint);
+                HandleOpenFilesTreeItemClickAt(clientPoint);
+                return 0;
+            }
+        }
+        else if (header && header->hwndFrom == g_hFolderTree)
         {
             if (header->code == NM_CUSTOMDRAW)
             {
@@ -5875,6 +6640,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             {
                 CaptureActiveTab();
                 InvalidateTabBar();
+                RefreshOpenFilesTree();
                 InvalidateStatusBar();
             }
             else if (header->code == SCN_MODIFIED)
@@ -5889,6 +6655,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             }
             else if (header->code == SCN_UPDATEUI)
             {
+                if (!g_highlightedWord.empty() && Sci(SCI_GETSELECTIONSTART) == Sci(SCI_GETSELECTIONEND))
+                    ClearWordHighlights();
                 InvalidateStatusBar();
             }
             else if (header->code == SCN_DOUBLECLICK)
@@ -5908,6 +6676,27 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         ::hWnd = hWnd;
         ApplyWindowChromeTheme(hWnd);
         UpdateMainMenuText();
+
+        g_hOpenFilesTree = CreateWindowExW(
+            0,
+            WC_TREEVIEWW,
+            L"",
+            WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP | TVS_SHOWSELALWAYS | TVS_NOHSCROLL,
+            0, 0, 0, 0,
+            hWnd,
+            reinterpret_cast<HMENU>(IDC_OPEN_FILES_TREE),
+            hInst,
+            nullptr
+        );
+
+        if (g_hOpenFilesTree)
+        {
+            TreeView_SetExtendedStyle(g_hOpenFilesTree, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
+            g_originalOpenFilesTreeProc = reinterpret_cast<WNDPROC>(
+                SetWindowLongPtrW(g_hOpenFilesTree, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(OpenFilesTreeWndProc)));
+            SendMessageW(g_hOpenFilesTree, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+            ApplyFolderTreeTheme();
+        }
 
         g_hFolderTree = CreateWindowExW(
             0,
@@ -5984,6 +6773,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             InitScintillaEditor();
             if (!LoadStartupTabs())
                 AddDocumentTab(CreateDefaultUntitledTab());
+            RefreshOpenFilesTree();
             LayoutChildWindows();
             SetFocus(g_hSci);
         }
@@ -6004,6 +6794,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             POINT point{};
             GetCursorPos(&point);
             ScreenToClient(hWnd, &point);
+            if (g_draggingFolderSectionSplitter || IsPointOnFolderSectionSplitter(point))
+            {
+                SetCursor(LoadCursor(nullptr, IDC_SIZENS));
+                return TRUE;
+            }
             if (g_draggingFolderSplitter || IsPointOnFolderSplitter(point))
             {
                 SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
@@ -6040,6 +6835,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_LBUTTONDOWN:
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        if (g_folderPaneVisible && IsPointOnFolderSectionSplitter(point))
+        {
+            g_draggingFolderSectionSplitter = true;
+            SetCapture(hWnd);
+            SetCursor(LoadCursor(nullptr, IDC_SIZENS));
+            return 0;
+        }
         if (g_folderPaneVisible && IsPointOnFolderSplitter(point))
         {
             g_draggingFolderSplitter = true;
@@ -6052,6 +6854,21 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
 
     case WM_MOUSEMOVE:
+        if (g_draggingFolderSectionSplitter)
+        {
+            RECT clientRect{};
+            GetClientRect(hWnd, &clientRect);
+            const int clientHeight = clientRect.bottom - clientRect.top;
+            const int contentHeight = (std::max)(0, clientHeight - kStatusBarHeight);
+            const int requestedHeight = GET_Y_LPARAM(lParam);
+            const int newHeight = ClampOpenFilesPaneHeight(requestedHeight, contentHeight);
+            if (newHeight != g_openFilesPaneHeight)
+            {
+                g_openFilesPaneHeight = newHeight;
+                LayoutChildWindows();
+            }
+            return 0;
+        }
         if (g_draggingFolderSplitter)
         {
             RECT clientRect{};
@@ -6065,6 +6882,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
 
     case WM_LBUTTONUP:
+        if (g_draggingFolderSectionSplitter)
+        {
+            g_draggingFolderSectionSplitter = false;
+            ReleaseCapture();
+            LayoutChildWindows();
+            return 0;
+        }
         if (g_draggingFolderSplitter)
         {
             const int newWidth = g_folderSplitterPreviewWidth >= 0 ? g_folderSplitterPreviewWidth : g_folderPaneWidth;
@@ -6083,6 +6907,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_CAPTURECHANGED:
         HideFolderSplitterPreview();
         g_draggingFolderSplitter = false;
+        g_draggingFolderSectionSplitter = false;
         break;
 
     case WM_NCHITTEST:
@@ -6141,6 +6966,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_DESTROY:
         if (g_hFolderTreeImageList)
         {
+            if (g_hOpenFilesTree && IsWindow(g_hOpenFilesTree))
+                TreeView_SetImageList(g_hOpenFilesTree, nullptr, TVSIL_NORMAL);
             if (g_hFolderTree && IsWindow(g_hFolderTree))
                 TreeView_SetImageList(g_hFolderTree, nullptr, TVSIL_NORMAL);
             ImageList_Destroy(g_hFolderTreeImageList);
