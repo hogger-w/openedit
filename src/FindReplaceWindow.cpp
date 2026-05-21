@@ -496,7 +496,9 @@ void OpenEditFindWindow::Hide()
         SWP_NOOWNERZORDER | SWP_NOACTIVATE);
 
     if (owner_ && IsWindow(owner_))
+    {
         SetActiveWindow(owner_);
+    }
 }
 
 void OpenEditFindWindow::Destroy()

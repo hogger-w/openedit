@@ -78,6 +78,7 @@
 #define IDM_LANG_NIM            32833
 #define IDM_LANG_REGISTRY       32834
 #define IDM_LANG_INNO           32835
+#define IDM_EDIT_COLUMN_EDITOR  32836
 #define IDC_FOLDER_TREE         1001
 #define IDC_TAB_BAR             1002
 #define IDC_STATUS_BAR          1003
@@ -92,7 +93,7 @@
 
 #define _APS_NO_MFC					130
 #define _APS_NEXT_RESOURCE_VALUE	129
-#define _APS_NEXT_COMMAND_VALUE		32836
+#define _APS_NEXT_COMMAND_VALUE		32837
 #define _APS_NEXT_CONTROL_VALUE		1302
 #define _APS_NEXT_SYMED_VALUE		110
 #endif

@@ -146,16 +146,29 @@ constexpr int IDC_SETTINGS_GENERAL_STARTUP_LABEL = 1013;
 constexpr int IDC_SETTINGS_SHORTCUT_RESET = 1014;
 constexpr int IDC_SETTINGS_SHORTCUT_LABEL_BASE = 1100;
 constexpr int IDC_SETTINGS_SHORTCUT_HOTKEY_BASE = 1200;
+constexpr int IDC_COLUMN_MODE_TEXT = 1400;
+constexpr int IDC_COLUMN_MODE_NUMBER = 1401;
+constexpr int IDC_COLUMN_TEXT_VALUE = 1402;
+constexpr int IDC_COLUMN_INITIAL_VALUE = 1403;
+constexpr int IDC_COLUMN_INCREMENT_VALUE = 1404;
+constexpr int IDC_COLUMN_REPEAT_VALUE = 1405;
+constexpr int IDC_COLUMN_PADDING_VALUE = 1406;
 constexpr int kFolderSplitterPreviewWindowWidth = 5;
 constexpr COLORREF kFolderSplitterPreviewBackColor = RGB(255, 0, 255);
 constexpr COLORREF kFolderSplitterPreviewLineColor = RGB(180, 180, 180);
 constexpr COLORREF kFolderTreeIconMaskColor = RGB(255, 0, 255);
+constexpr sptr_t kColumnEditMaxDocumentBytes = 200LL * 1024LL * 1024LL;
+constexpr sptr_t kColumnEditMaxAffectedLines = 100000;
+constexpr sptr_t kColumnEditMaxLineBytes = 2LL * 1024LL * 1024LL;
+constexpr sptr_t kColumnEditMaxVisualColumn = 200000;
+constexpr size_t kColumnEditMaxInsertBytes = 64ULL * 1024ULL * 1024ULL;
 
 const wchar_t kTabBarClassName[] = L"OpenEditTabBar";
 const wchar_t kStatusBarClassName[] = L"OpenEditStatusBar";
 const wchar_t kSettingsWindowClassName[] = L"OpenEditSettingsWindow";
 const wchar_t kAboutWindowClassName[] = L"OpenEditAboutWindow";
 const wchar_t kFolderSplitterPreviewClassName[] = L"OpenEditFolderSplitterPreview";
+const wchar_t kColumnEditorWindowClassName[] = L"OpenEditColumnEditorWindow";
 
 enum class AppTheme
 {
@@ -167,6 +180,19 @@ enum class AppLanguage
 {
     Chinese,
     English,
+};
+
+enum class ColumnEditorMode
+{
+    Text,
+    Number,
+};
+
+enum class ColumnPaddingMode
+{
+    None,
+    Zero,
+    Space,
 };
 
 // 全局变量
@@ -184,6 +210,7 @@ HWND g_hFindReplaceDialog = nullptr;
 HWND g_hSettingsWindow = nullptr;
 HWND g_hAboutWindow = nullptr;
 HWND g_hFolderSplitterPreview = nullptr;
+HWND g_hColumnEditorWindow = nullptr;
 HACCEL g_hAccelTable = nullptr;
 HMENU g_hSettingsMenu = nullptr;
 HIMAGELIST g_hFolderTreeImageList = nullptr;
@@ -212,6 +239,7 @@ bool g_restorePreviousFilesOnStartup = true;
 bool g_restoreFolderInSession = false;
 AppTheme g_settingsDraftTheme = AppTheme::Dark;
 AppLanguage g_settingsDraftLanguage = AppLanguage::Chinese;
+ColumnEditorMode g_columnEditorMode = ColumnEditorMode::Text;
 bool g_settingsDraftRestorePreviousFiles = true;
 int g_settingsActiveTab = 0;
 bool g_showSpaceAndTab = false;
@@ -338,6 +366,7 @@ LRESULT CALLBACK    TabBarWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    StatusBarWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    SettingsWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    AboutWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    ColumnEditorWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    FolderTreeWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    OpenFilesTreeWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    FolderSplitterPreviewWndProc(HWND, UINT, WPARAM, LPARAM);
@@ -354,6 +383,7 @@ void                UpdateViewMenuCheck();
 void                UpdateLanguageMenuCheck();
 void                ShowSettingsWindow();
 void                ShowAboutWindow();
+void                ShowColumnEditorWindow();
 void                InvalidateTabBar();
 void                InvalidateOpenFilesTree();
 void                InvalidateFolderTree();
@@ -371,6 +401,7 @@ bool                HandleFolderTreeItemClickAt(POINT clientPoint, bool doubleCl
 bool                HandleOpenFilesTreeItemClickAt(POINT clientPoint);
 void                ClearWordHighlights();
 void                InvalidateStatusBar();
+void                DrawFolderToggleButton(HWND owner);
 
 enum class SyntaxFamily
 {
@@ -1196,6 +1227,47 @@ bool MenuHasCommand(HMENU menu, UINT commandId)
     return false;
 }
 
+int MenuCommandIndex(HMENU menu, UINT commandId)
+{
+    if (!menu)
+        return -1;
+
+    const int count = GetMenuItemCount(menu);
+    for (int index = 0; index < count; ++index)
+    {
+        if (GetMenuItemID(menu, index) == commandId)
+            return index;
+    }
+    return -1;
+}
+
+bool IsMenuSeparatorAt(HMENU menu, int index)
+{
+    if (!menu || index < 0 || index >= GetMenuItemCount(menu))
+        return false;
+
+    MENUITEMINFOW info{};
+    info.cbSize = sizeof(info);
+    info.fMask = MIIM_FTYPE;
+    return GetMenuItemInfoW(menu, index, TRUE, &info) &&
+        (info.fType & MFT_SEPARATOR) != 0;
+}
+
+void EnsureEditColumnEditorCommand(HMENU editMenu)
+{
+    if (!editMenu || MenuHasCommand(editMenu, IDM_EDIT_COLUMN_EDITOR))
+        return;
+
+    int insertIndex = GetMenuItemCount(editMenu);
+    const int searchIndex = MenuCommandIndex(editMenu, IDM_SEARCH_FIND);
+    if (searchIndex >= 0)
+        insertIndex = IsMenuSeparatorAt(editMenu, searchIndex - 1) ? searchIndex - 1 : searchIndex;
+
+    const std::wstring text = StripMenuMnemonic(UiText(L"\u5217\u7F16\u8F91\u5668(&L)...", L"Column Editor(&L)..."));
+    InsertMenuW(editMenu, insertIndex, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
+    InsertMenuW(editMenu, insertIndex + 1, MF_BYPOSITION | MF_STRING, IDM_EDIT_COLUMN_EDITOR, text.c_str());
+}
+
 void EnsureEditSearchCommands(HMENU editMenu)
 {
     if (!editMenu || MenuHasCommand(editMenu, IDM_SEARCH_FIND))
@@ -1460,6 +1532,7 @@ void UpdateMainMenuText()
     SetMenuText(fileMenu, IDM_EXIT, UiText(L"\u9000\u51FA(&X)", L"Exit(&X)"));
 
     HMENU editMenu = GetSubMenu(menu, 1);
+    EnsureEditColumnEditorCommand(editMenu);
     EnsureEditSearchCommands(editMenu);
     SetMenuText(editMenu, IDM_EDIT_UNDO, MenuLabelWithShortcut(L"\u64A4\u9500(&U)", L"Undo(&U)", IDM_EDIT_UNDO).c_str());
     SetMenuText(editMenu, IDM_EDIT_REDO, MenuLabelWithShortcut(L"\u91CD\u505A(&R)", L"Redo(&R)", IDM_EDIT_REDO).c_str());
@@ -1468,6 +1541,7 @@ void UpdateMainMenuText()
     SetMenuText(editMenu, IDM_EDIT_PASTE, MenuLabelWithShortcut(L"\u7C98\u8D34(&P)", L"Paste(&P)", IDM_EDIT_PASTE).c_str());
     SetMenuText(editMenu, IDM_EDIT_DELETE, MenuLabelWithShortcut(L"\u5220\u9664(&D)", L"Delete(&D)", IDM_EDIT_DELETE).c_str());
     SetMenuText(editMenu, IDM_EDIT_SELECT_ALL, MenuLabelWithShortcut(L"\u5168\u9009(&A)", L"Select All(&A)", IDM_EDIT_SELECT_ALL).c_str());
+    SetMenuText(editMenu, IDM_EDIT_COLUMN_EDITOR, UiText(L"\u5217\u7F16\u8F91\u5668(&L)...", L"Column Editor(&L)..."));
     SetMenuText(editMenu, IDM_SEARCH_FIND, MenuLabelWithShortcut(L"\u67E5\u627E(&F)", L"Find(&F)", IDM_SEARCH_FIND).c_str());
     SetMenuText(editMenu, IDM_SEARCH_REPLACE, MenuLabelWithShortcut(L"\u66FF\u6362(&R)", L"Replace(&R)", IDM_SEARCH_REPLACE).c_str());
 
@@ -2137,6 +2211,13 @@ void ApplyLanguage(int commandId)
 void InitScintillaEditor()
 {
     Sci(SCI_SETCODEPAGE, SC_CP_UTF8, 0);
+    Sci(SCI_SETMULTIPLESELECTION, TRUE, 0);
+    Sci(SCI_SETADDITIONALSELECTIONTYPING, TRUE, 0);
+    Sci(SCI_SETADDITIONALCARETSVISIBLE, TRUE, 0);
+    Sci(SCI_SETADDITIONALCARETSBLINK, TRUE, 0);
+    Sci(SCI_SETVIRTUALSPACEOPTIONS, SCVS_RECTANGULARSELECTION, 0);
+    Sci(SCI_SETMOUSESELECTIONRECTANGULARSWITCH, TRUE, 0);
+    Sci(SCI_SETRECTANGULARSELECTIONMODIFIER, SCMOD_ALT, 0);
     ConfigureControlCharacterRepresentations();
     ApplyBaseEditorStyles();
     ApplyLanguage(IDM_LANG_TEXT);
@@ -2198,6 +2279,11 @@ void ApplyAppTheme()
     {
         ApplyWindowChromeTheme(g_hAboutWindow);
         RedrawWindow(g_hAboutWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+    }
+    if (g_hColumnEditorWindow && IsWindow(g_hColumnEditorWindow))
+    {
+        ApplyWindowChromeTheme(g_hColumnEditorWindow);
+        RedrawWindow(g_hColumnEditorWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
     }
     InvalidateTabBar();
     InvalidateStatusBar();
@@ -3004,7 +3090,8 @@ LRESULT HandleFindReplaceMessage(LPARAM lParam)
 
 bool IsEditCommand(int commandId)
 {
-    return commandId >= IDM_EDIT_UNDO && commandId <= IDM_EDIT_SELECT_ALL;
+    return (commandId >= IDM_EDIT_UNDO && commandId <= IDM_EDIT_SELECT_ALL) ||
+        commandId == IDM_EDIT_COLUMN_EDITOR;
 }
 
 void ExecuteEditCommand(int commandId)
@@ -3032,10 +3119,521 @@ void ExecuteEditCommand(int commandId)
     case IDM_EDIT_SELECT_ALL:
         Sci(SCI_SELECTALL);
         break;
+    case IDM_EDIT_COLUMN_EDITOR:
+        ShowColumnEditorWindow();
+        break;
     default:
         break;
     }
-    SetFocus(g_hSci);
+    if (commandId != IDM_EDIT_COLUMN_EDITOR)
+        SetFocus(g_hSci);
+}
+
+struct ColumnEditSelection
+{
+    sptr_t firstLine = 0;
+    sptr_t lastLine = 0;
+    sptr_t insertColumn = 0;
+    sptr_t lineCount = 0;
+};
+
+struct ColumnEditRequest
+{
+    ColumnEditorMode mode = ColumnEditorMode::Text;
+    ColumnPaddingMode padding = ColumnPaddingMode::None;
+    std::wstring text;
+    long long initialValue = 1;
+    long long increment = 1;
+    int repeatCount = 1;
+    size_t minimumNumberWidth = 0;
+};
+
+struct ColumnInsertPoint
+{
+    sptr_t position = 0;
+    sptr_t spacesBeforeValue = 0;
+};
+
+struct ColumnEditInsertion
+{
+    sptr_t line = 0;
+    sptr_t position = 0;
+    size_t spacesBeforeValue = 0;
+    size_t valueBytes = 0;
+    std::string text;
+};
+
+const wchar_t* ColumnEditorTitle()
+{
+    return UiText(L"\u5217\u7F16\u8F91\u5668", L"Column Editor");
+}
+
+void ShowColumnEditorMessage(HWND owner, const std::wstring& message)
+{
+    MessageBoxW(owner ? owner : hWnd, message.c_str(), ColumnEditorTitle(), MB_OK | MB_ICONWARNING);
+}
+
+void ShowColumnEditorMessage(HWND owner, const wchar_t* chinese, const wchar_t* english)
+{
+    ShowColumnEditorMessage(owner, UiText(chinese, english));
+}
+
+std::wstring TrimWhitespace(const std::wstring& text)
+{
+    size_t first = 0;
+    while (first < text.size() && iswspace(text[first]))
+        ++first;
+
+    size_t last = text.size();
+    while (last > first && iswspace(text[last - 1]))
+        --last;
+
+    return text.substr(first, last - first);
+}
+
+std::wstring GetControlText(HWND parent, int controlId)
+{
+    HWND control = GetDlgItem(parent, controlId);
+    if (!control)
+        return {};
+
+    const int length = GetWindowTextLengthW(control);
+    if (length <= 0)
+        return {};
+
+    std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+    GetWindowTextW(control, text.data(), length + 1);
+    text.resize(static_cast<size_t>(length));
+    return text;
+}
+
+bool TryParseInt64(const std::wstring& text, long long& value)
+{
+    const std::wstring trimmed = TrimWhitespace(text);
+    if (trimmed.empty())
+        return false;
+
+    size_t parsed = 0;
+    try
+    {
+        value = std::stoll(trimmed, &parsed, 10);
+    }
+    catch (...)
+    {
+        return false;
+    }
+    return parsed == trimmed.size();
+}
+
+bool TryParsePositiveInt(const std::wstring& text, int& value)
+{
+    long long parsed = 0;
+    if (!TryParseInt64(text, parsed) || parsed <= 0 || parsed > (std::numeric_limits<int>::max)())
+        return false;
+
+    value = static_cast<int>(parsed);
+    return true;
+}
+
+size_t MinimumNumberWidthFromInitialText(const std::wstring& text)
+{
+    std::wstring trimmed = TrimWhitespace(text);
+    if (!trimmed.empty() && trimmed[0] == L'+')
+        trimmed.erase(trimmed.begin());
+    return trimmed.size();
+}
+
+bool CheckedAddInt64(long long left, long long right, long long& result)
+{
+    if (right > 0 && left > (std::numeric_limits<long long>::max)() - right)
+        return false;
+    if (right < 0 && left < (std::numeric_limits<long long>::min)() - right)
+        return false;
+
+    result = left + right;
+    return true;
+}
+
+std::wstring ApplyNumberPadding(const std::wstring& value, size_t width, ColumnPaddingMode padding)
+{
+    if (padding == ColumnPaddingMode::None || value.size() >= width)
+        return value;
+
+    const size_t fillCount = width - value.size();
+    if (padding == ColumnPaddingMode::Space)
+        return std::wstring(fillCount, L' ') + value;
+
+    if (!value.empty() && value[0] == L'-')
+        return std::wstring(L"-") + std::wstring(fillCount, L'0') + value.substr(1);
+    return std::wstring(fillCount, L'0') + value;
+}
+
+bool IsRectangularSelectionMode(int selectionMode)
+{
+    return selectionMode == SC_SEL_RECTANGLE || selectionMode == SC_SEL_THIN;
+}
+
+bool GetActiveColumnSelection(ColumnEditSelection& selection, std::wstring& error)
+{
+    if (!g_hSci)
+    {
+        error = UiText(L"\u7F16\u8F91\u5668\u5C1A\u672A\u521D\u59CB\u5316\u3002", L"The editor is not initialized.");
+        return false;
+    }
+
+    const int selectionMode = static_cast<int>(Sci(SCI_GETSELECTIONMODE));
+    const int selectionCount = static_cast<int>(Sci(SCI_GETSELECTIONS));
+    const bool rectangularSelection = Sci(SCI_SELECTIONISRECTANGLE) != 0 || IsRectangularSelectionMode(selectionMode);
+    if (!rectangularSelection)
+    {
+        error = selectionCount > 1 ?
+            UiText(L"\u5217\u7F16\u8F91\u5668\u4EC5\u652F\u6301\u5355\u4E2A\u77E9\u5F62\u5217\u9009\u533A\uFF1B\u8BF7\u5148\u53D6\u6D88\u591A\u5149\u6807/\u591A\u9009\u533A\u3002",
+                L"Column Editor supports one rectangular selection only; clear multiple selections first.") :
+            UiText(L"\u8BF7\u5148\u4F7F\u7528 Alt+\u62D6\u52A8\u6216 Alt+Shift+\u65B9\u5411\u952E\u521B\u5EFA\u77E9\u5F62\u5217\u9009\u533A\u3002",
+                L"Create a rectangular column selection first with Alt+drag or Alt+Shift+arrow keys.");
+        return false;
+    }
+
+    const sptr_t anchor = Sci(SCI_GETRECTANGULARSELECTIONANCHOR);
+    const sptr_t caret = Sci(SCI_GETRECTANGULARSELECTIONCARET);
+    if (anchor == INVALID_POSITION || caret == INVALID_POSITION)
+    {
+        error = UiText(L"\u77E9\u5F62\u5217\u9009\u533A\u65E0\u6548\u3002", L"The rectangular column selection is invalid.");
+        return false;
+    }
+
+    const sptr_t anchorLine = Sci(SCI_LINEFROMPOSITION, static_cast<uptr_t>(anchor), 0);
+    const sptr_t caretLine = Sci(SCI_LINEFROMPOSITION, static_cast<uptr_t>(caret), 0);
+    const sptr_t lineCount = Sci(SCI_GETLINECOUNT);
+    if (anchorLine < 0 || caretLine < 0 || anchorLine >= lineCount || caretLine >= lineCount)
+    {
+        error = UiText(L"\u77E9\u5F62\u5217\u9009\u533A\u8D85\u51FA\u6587\u6863\u8303\u56F4\u3002", L"The rectangular column selection is outside the document.");
+        return false;
+    }
+
+    const sptr_t anchorColumn = Sci(SCI_GETCOLUMN, static_cast<uptr_t>(anchor), 0) +
+        Sci(SCI_GETRECTANGULARSELECTIONANCHORVIRTUALSPACE);
+    const sptr_t caretColumn = Sci(SCI_GETCOLUMN, static_cast<uptr_t>(caret), 0) +
+        Sci(SCI_GETRECTANGULARSELECTIONCARETVIRTUALSPACE);
+
+    selection.firstLine = (std::min)(anchorLine, caretLine);
+    selection.lastLine = (std::max)(anchorLine, caretLine);
+    selection.insertColumn = (std::min)(anchorColumn, caretColumn);
+    selection.lineCount = selection.lastLine - selection.firstLine + 1;
+
+    if (selection.lineCount <= 0 || selection.lineCount > kColumnEditMaxAffectedLines)
+    {
+        error = UiText(L"\u5217\u5757\u5305\u542B\u7684\u884C\u6570\u8FC7\u591A\uFF0C\u5217\u7F16\u8F91\u5DF2\u4E2D\u6B62\u3002",
+            L"The column block has too many lines, so the edit was stopped.");
+        return false;
+    }
+
+    if (selection.insertColumn < 0 || selection.insertColumn > kColumnEditMaxVisualColumn)
+    {
+        error = UiText(L"\u76EE\u6807\u5217\u8FC7\u5927\uFF0C\u53EF\u80FD\u9700\u8981\u586B\u5145\u8FC7\u591A\u7A7A\u683C\u3002",
+            L"The target column is too large and would require too much space padding.");
+        return false;
+    }
+
+    return true;
+}
+
+bool GetInsertionPointForVisualColumn(sptr_t line, sptr_t targetColumn, ColumnInsertPoint& point, std::wstring& error)
+{
+    const sptr_t lineStart = Sci(SCI_POSITIONFROMLINE, static_cast<uptr_t>(line), 0);
+    const sptr_t lineEnd = Sci(SCI_GETLINEENDPOSITION, static_cast<uptr_t>(line), 0);
+    if (lineStart < 0 || lineEnd < lineStart)
+    {
+        error = UiText(L"\u65E0\u6CD5\u8BFB\u53D6\u5217\u5757\u4E2D\u7684\u884C\u3002", L"Could not read a line in the column block.");
+        return false;
+    }
+
+    if (lineEnd - lineStart > kColumnEditMaxLineBytes)
+    {
+        error = UiText(L"\u5217\u5757\u4E2D\u5B58\u5728\u8FC7\u957F\u884C\uFF0C\u5217\u7F16\u8F91\u5DF2\u4E2D\u6B62\u3002",
+            L"The column block contains an excessively long line, so the edit was stopped.");
+        return false;
+    }
+
+    sptr_t position = Sci(SCI_FINDCOLUMN, static_cast<uptr_t>(line), targetColumn);
+    if (position < lineStart)
+        position = lineStart;
+    if (position > lineEnd)
+        position = lineEnd;
+
+    sptr_t actualColumn = Sci(SCI_GETCOLUMN, static_cast<uptr_t>(position), 0);
+    if (actualColumn > targetColumn)
+    {
+        sptr_t candidate = position;
+        while (candidate > lineStart)
+        {
+            const sptr_t previous = Sci(SCI_POSITIONBEFORE, static_cast<uptr_t>(candidate), 0);
+            if (previous < lineStart || previous >= candidate)
+                break;
+
+            const sptr_t previousColumn = Sci(SCI_GETCOLUMN, static_cast<uptr_t>(previous), 0);
+            if (previousColumn <= targetColumn)
+            {
+                candidate = previous;
+                actualColumn = previousColumn;
+                break;
+            }
+            candidate = previous;
+        }
+
+        position = candidate;
+        if (actualColumn > targetColumn)
+            actualColumn = Sci(SCI_GETCOLUMN, static_cast<uptr_t>(position), 0);
+    }
+
+    if (actualColumn > targetColumn)
+    {
+        error = UiText(L"\u65E0\u6CD5\u5C06\u76EE\u6807\u89C6\u89C9\u5217\u6620\u5C04\u5230\u6587\u672C\u4F4D\u7F6E\u3002",
+            L"Could not map the target visual column to a text position.");
+        return false;
+    }
+
+    point.position = position;
+    point.spacesBeforeValue = targetColumn - actualColumn;
+    return true;
+}
+
+bool BuildColumnValueTexts(const ColumnEditSelection& selection, const ColumnEditRequest& request,
+    std::vector<std::string>& values, bool& sameValueWidth, std::wstring& error)
+{
+    const size_t rows = static_cast<size_t>(selection.lineCount);
+    values.clear();
+    values.reserve(rows);
+    sameValueWidth = true;
+
+    if (request.mode == ColumnEditorMode::Text)
+    {
+        const std::string value = WideToUtf8(request.text);
+        if (value.empty())
+        {
+            error = UiText(L"\u8BF7\u8F93\u5165\u8981\u63D2\u5165\u7684\u6587\u672C\u3002", L"Enter the text to insert.");
+            return false;
+        }
+
+        for (size_t index = 0; index < rows; ++index)
+            values.push_back(value);
+        return true;
+    }
+
+    std::vector<std::wstring> baseValues;
+    baseValues.reserve(rows);
+    size_t fieldWidth = request.padding == ColumnPaddingMode::None ? 0 : request.minimumNumberWidth;
+    long long value = request.initialValue;
+    for (size_t index = 0; index < rows; ++index)
+    {
+        std::wstring base = std::to_wstring(value);
+        fieldWidth = (std::max)(fieldWidth, base.size());
+        baseValues.push_back(std::move(base));
+
+        if (index + 1 < rows && ((index + 1) % static_cast<size_t>(request.repeatCount)) == 0)
+        {
+            long long next = 0;
+            if (!CheckedAddInt64(value, request.increment, next))
+            {
+                error = UiText(L"\u6570\u5B57\u5E8F\u5217\u8D85\u51FA 64 \u4F4D\u6574\u6570\u8303\u56F4\u3002",
+                    L"The numeric sequence exceeds the 64-bit integer range.");
+                return false;
+            }
+            value = next;
+        }
+    }
+
+    size_t firstWidth = 0;
+    for (size_t index = 0; index < baseValues.size(); ++index)
+    {
+        const std::wstring formatted = ApplyNumberPadding(baseValues[index], fieldWidth, request.padding);
+        std::string utf8Value = WideToUtf8(formatted);
+        if (index == 0)
+            firstWidth = utf8Value.size();
+        else if (utf8Value.size() != firstWidth)
+            sameValueWidth = false;
+        values.push_back(std::move(utf8Value));
+    }
+
+    return true;
+}
+
+bool BuildColumnEditInsertions(const ColumnEditSelection& selection, const ColumnEditRequest& request,
+    std::vector<ColumnEditInsertion>& insertions, bool& sameValueWidth, std::wstring& error)
+{
+    std::vector<std::string> values;
+    if (!BuildColumnValueTexts(selection, request, values, sameValueWidth, error))
+        return false;
+
+    insertions.clear();
+    insertions.reserve(values.size());
+    size_t totalBytes = 0;
+    for (size_t index = 0; index < values.size(); ++index)
+    {
+        const sptr_t line = selection.firstLine + static_cast<sptr_t>(index);
+        ColumnInsertPoint insertPoint{};
+        if (!GetInsertionPointForVisualColumn(line, selection.insertColumn, insertPoint, error))
+            return false;
+
+        if (insertPoint.spacesBeforeValue < 0 ||
+            insertPoint.spacesBeforeValue > static_cast<sptr_t>(kColumnEditMaxInsertBytes))
+        {
+            error = UiText(L"\u9700\u8981\u586B\u5145\u7684\u7A7A\u683C\u8FC7\u591A\uFF0C\u5217\u7F16\u8F91\u5DF2\u4E2D\u6B62\u3002",
+                L"Too much space padding would be required, so the column edit was stopped.");
+            return false;
+        }
+
+        const size_t spaces = static_cast<size_t>(insertPoint.spacesBeforeValue);
+        const size_t valueBytes = values[index].size();
+        if (totalBytes > kColumnEditMaxInsertBytes - spaces ||
+            totalBytes + spaces > kColumnEditMaxInsertBytes - valueBytes)
+        {
+            error = UiText(L"\u672C\u6B21\u63D2\u5165\u5185\u5BB9\u8FC7\u5927\uFF0C\u5217\u7F16\u8F91\u5DF2\u4E2D\u6B62\u3002",
+                L"This insertion is too large, so the column edit was stopped.");
+            return false;
+        }
+        totalBytes += spaces + valueBytes;
+
+        std::string insertionText(spaces, ' ');
+        insertionText += values[index];
+        insertions.push_back(ColumnEditInsertion{
+            line,
+            insertPoint.position,
+            spaces,
+            valueBytes,
+            std::move(insertionText)
+        });
+    }
+
+    const sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
+    if (documentLength > kColumnEditMaxDocumentBytes)
+    {
+        error = UiText(L"\u6587\u4EF6\u8FC7\u5927\uFF0C\u5217\u7F16\u8F91\u5DF2\u4E2D\u6B62\u3002",
+            L"The file is too large, so the column edit was stopped.");
+        return false;
+    }
+
+    if (totalBytes > static_cast<size_t>((std::numeric_limits<sptr_t>::max)() - documentLength))
+    {
+        error = UiText(L"\u672C\u6B21\u63D2\u5165\u540E\u6587\u6863\u5927\u5C0F\u8D85\u51FA\u652F\u6301\u8303\u56F4\u3002",
+            L"The document would exceed the supported size after this insertion.");
+        return false;
+    }
+
+    return true;
+}
+
+sptr_t PositionForSelectionColumn(sptr_t line, sptr_t column, sptr_t& virtualSpace)
+{
+    sptr_t position = Sci(SCI_FINDCOLUMN, static_cast<uptr_t>(line), column);
+    const sptr_t actualColumn = Sci(SCI_GETCOLUMN, static_cast<uptr_t>(position), 0);
+    virtualSpace = actualColumn < column ? column - actualColumn : 0;
+    return position;
+}
+
+void SetRectangularSelectionByColumns(sptr_t firstLine, sptr_t lastLine, sptr_t startColumn, sptr_t endColumn)
+{
+    sptr_t anchorVirtual = 0;
+    sptr_t caretVirtual = 0;
+    const sptr_t anchor = PositionForSelectionColumn(firstLine, startColumn, anchorVirtual);
+    const sptr_t caret = PositionForSelectionColumn(lastLine, endColumn, caretVirtual);
+
+    Sci(SCI_SETSELECTIONMODE, endColumn == startColumn ? SC_SEL_THIN : SC_SEL_RECTANGLE, 0);
+    Sci(SCI_SETRECTANGULARSELECTIONANCHOR, static_cast<uptr_t>(anchor), 0);
+    Sci(SCI_SETRECTANGULARSELECTIONANCHORVIRTUALSPACE, static_cast<uptr_t>(anchorVirtual), 0);
+    Sci(SCI_SETRECTANGULARSELECTIONCARET, static_cast<uptr_t>(caret), 0);
+    Sci(SCI_SETRECTANGULARSELECTIONCARETVIRTUALSPACE, static_cast<uptr_t>(caretVirtual), 0);
+    Sci(SCI_SCROLLCARET);
+}
+
+void RestoreColumnEditSelection(const ColumnEditSelection& selection,
+    const std::vector<ColumnEditInsertion>& insertions, bool sameValueWidth)
+{
+    if (insertions.empty())
+        return;
+
+    if (sameValueWidth)
+    {
+        const sptr_t valueStart = Sci(SCI_FINDCOLUMN, static_cast<uptr_t>(selection.firstLine), selection.insertColumn);
+        const sptr_t valueEnd = valueStart + static_cast<sptr_t>(insertions.front().valueBytes);
+        const sptr_t endColumn = Sci(SCI_GETCOLUMN, static_cast<uptr_t>(valueEnd), 0);
+        SetRectangularSelectionByColumns(selection.firstLine, selection.lastLine, selection.insertColumn, endColumn);
+        return;
+    }
+
+    const sptr_t caretColumn = selection.insertColumn + static_cast<sptr_t>(insertions.back().valueBytes);
+    SetRectangularSelectionByColumns(selection.lastLine, selection.lastLine, caretColumn, caretColumn);
+}
+
+bool ApplyColumnEditRequest(HWND owner, const ColumnEditRequest& request)
+{
+    if (Sci(SCI_GETREADONLY))
+    {
+        ShowColumnEditorMessage(owner, L"\u5F53\u524D\u6587\u6863\u662F\u53EA\u8BFB\u7684\uFF0C\u65E0\u6CD5\u6267\u884C\u5217\u7F16\u8F91\u3002",
+            L"The current document is read-only, so column editing cannot be applied.");
+        return false;
+    }
+
+    ColumnEditSelection selection{};
+    std::wstring error;
+    if (!GetActiveColumnSelection(selection, error))
+    {
+        ShowColumnEditorMessage(owner, error);
+        return false;
+    }
+
+    bool sameValueWidth = true;
+    std::vector<ColumnEditInsertion> insertions;
+    if (!BuildColumnEditInsertions(selection, request, insertions, sameValueWidth, error))
+    {
+        ShowColumnEditorMessage(owner, error);
+        return false;
+    }
+
+    size_t totalBytes = 0;
+    for (const ColumnEditInsertion& insertion : insertions)
+        totalBytes += insertion.text.size();
+
+    const sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
+    Sci(SCI_ALLOCATE, static_cast<uptr_t>(documentLength + static_cast<sptr_t>(totalBytes)), 0);
+
+    {
+        ScopedRedrawPause pause(g_hSci);
+        Sci(SCI_BEGINUNDOACTION);
+        for (auto it = insertions.rbegin(); it != insertions.rend(); ++it)
+        {
+            Sci(SCI_INSERTTEXT, static_cast<uptr_t>(it->position), reinterpret_cast<sptr_t>(it->text.c_str()));
+        }
+        Sci(SCI_ENDUNDOACTION);
+    }
+
+    RestoreColumnEditSelection(selection, insertions, sameValueWidth);
+    SetActiveTabModified(true);
+    return true;
+}
+
+void DestroyPopupWindowWithoutFlash(HWND popupWindow)
+{
+    if (!popupWindow || !IsWindow(popupWindow))
+        return;
+
+    if (hWnd && IsWindow(hWnd) && !IsWindowEnabled(hWnd))
+        EnableWindow(hWnd, TRUE);
+    if (hWnd && IsWindow(hWnd))
+        SetActiveWindow(hWnd);
+    DestroyWindow(popupWindow);
+}
+
+void RestoreMainWindowAfterPopupClose(bool focusEditor)
+{
+    if (!hWnd || !IsWindow(hWnd))
+        return;
+
+    if (!IsWindowEnabled(hWnd))
+        EnableWindow(hWnd, TRUE);
+    SetActiveWindow(hWnd);
+    if (focusEditor && g_hSci && IsWindow(g_hSci))
+        SetFocus(g_hSci);
 }
 
 void InvalidateTabBar()
@@ -5428,6 +6026,11 @@ bool IsSettingsOptionControl(int controlId)
     }
 }
 
+bool IsColumnEditorOptionControl(int controlId)
+{
+    return controlId == IDC_COLUMN_MODE_TEXT || controlId == IDC_COLUMN_MODE_NUMBER;
+}
+
 bool IsSettingsNavigationControl(int controlId)
 {
     return controlId == IDC_SETTINGS_TAB_GENERAL || controlId == IDC_SETTINGS_TAB_SHORTCUTS;
@@ -5491,6 +6094,11 @@ bool IsSettingsRadioControl(int controlId)
     }
 }
 
+bool IsColumnEditorRadioControl(int controlId)
+{
+    return IsColumnEditorOptionControl(controlId);
+}
+
 bool IsSettingsOptionChecked(int controlId)
 {
     switch (controlId)
@@ -5510,6 +6118,19 @@ bool IsSettingsOptionChecked(int controlId)
     }
 }
 
+bool IsColumnEditorOptionChecked(int controlId)
+{
+    switch (controlId)
+    {
+    case IDC_COLUMN_MODE_TEXT:
+        return g_columnEditorMode == ColumnEditorMode::Text;
+    case IDC_COLUMN_MODE_NUMBER:
+        return g_columnEditorMode == ColumnEditorMode::Number;
+    default:
+        return false;
+    }
+}
+
 void RedrawSettingsOptions(HWND settingsWindow)
 {
     RedrawWindow(settingsWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
@@ -5521,8 +6142,9 @@ void DrawPopupOptionControl(const DRAWITEMSTRUCT* drawItem)
         return;
 
     const int controlId = GetDlgCtrlID(drawItem->hwndItem);
-    const bool radio = IsSettingsRadioControl(controlId);
-    const bool checked = IsSettingsOptionChecked(controlId);
+    const bool radio = IsSettingsRadioControl(controlId) || IsColumnEditorRadioControl(controlId);
+    const bool checked = IsSettingsOptionControl(controlId) ?
+        IsSettingsOptionChecked(controlId) : IsColumnEditorOptionChecked(controlId);
     RECT rect = drawItem->rcItem;
 
     FillRect(drawItem->hDC, &rect, GetPopupSurfaceBrush());
@@ -5947,7 +6569,7 @@ void InitializeAboutControls(HWND aboutWindow)
 
     CreateSettingsControl(aboutWindow, L"STATIC", L"openedit",
         SS_LEFTNOWORDWRAP, 78, 30, 220, 24, IDC_STATIC);
-    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.2", L"Version 1.0.2"),
+    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.3", L"Version 1.0.3"),
         SS_LEFTNOWORDWRAP, 78, 58, 220, 20, IDC_STATIC);
     SYSTEMTIME localTime{};
     GetLocalTime(&localTime);
@@ -5994,6 +6616,298 @@ void ShowAboutWindow()
     UpdateWindow(g_hAboutWindow);
 }
 
+void UpdateColumnEditorModeControls(HWND columnWindow)
+{
+    const bool textMode = g_columnEditorMode == ColumnEditorMode::Text;
+    EnableWindow(GetDlgItem(columnWindow, IDC_COLUMN_TEXT_VALUE), textMode ? TRUE : FALSE);
+
+    const int numberControls[] = {
+        IDC_COLUMN_INITIAL_VALUE,
+        IDC_COLUMN_INCREMENT_VALUE,
+        IDC_COLUMN_REPEAT_VALUE,
+        IDC_COLUMN_PADDING_VALUE
+    };
+    for (int controlId : numberControls)
+        EnableWindow(GetDlgItem(columnWindow, controlId), textMode ? FALSE : TRUE);
+
+    RedrawWindow(columnWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+}
+
+HWND CreateColumnEditorControl(HWND parent, const wchar_t* className, const wchar_t* text,
+    DWORD style, int x, int y, int width, int height, int id)
+{
+    HWND control = CreateSettingsControl(parent, className, text, style, x, y, width, height, id);
+    if (control && (lstrcmpW(className, L"EDIT") == 0 || lstrcmpW(className, L"COMBOBOX") == 0))
+        ApplyControlTheme(control);
+    return control;
+}
+
+void InitializeColumnEditorControls(HWND columnWindow)
+{
+    g_columnEditorMode = ColumnEditorMode::Text;
+
+    CreateColumnEditorControl(columnWindow, L"BUTTON", UiText(L"\u63D2\u5165\u6587\u672C", L"Insert Text"),
+        BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, 30, 22, 120, 22, IDC_COLUMN_MODE_TEXT);
+    CreateColumnEditorControl(columnWindow, L"BUTTON", UiText(L"\u63D2\u5165\u6570\u5B57", L"Insert Number"),
+        BS_OWNERDRAW | WS_TABSTOP, 164, 22, 136, 22, IDC_COLUMN_MODE_NUMBER);
+
+    CreateColumnEditorControl(columnWindow, L"STATIC", UiText(L"\u6587\u672C", L"Text"),
+        SS_LEFTNOWORDWRAP, 30, 58, 72, 20, IDC_STATIC);
+    CreateColumnEditorControl(columnWindow, L"EDIT", L"",
+        WS_TABSTOP | WS_BORDER | ES_LEFT | ES_AUTOHSCROLL, 112, 54, 310, 24, IDC_COLUMN_TEXT_VALUE);
+
+    CreateColumnEditorControl(columnWindow, L"STATIC", UiText(L"\u521D\u59CB\u503C", L"Initial"),
+        SS_LEFTNOWORDWRAP, 30, 106, 72, 20, IDC_STATIC);
+    CreateColumnEditorControl(columnWindow, L"EDIT", L"1",
+        WS_TABSTOP | WS_BORDER | ES_LEFT | ES_AUTOHSCROLL, 112, 102, 120, 24, IDC_COLUMN_INITIAL_VALUE);
+
+    CreateColumnEditorControl(columnWindow, L"STATIC", UiText(L"\u589E\u91CF", L"Increment"),
+        SS_LEFTNOWORDWRAP, 256, 106, 72, 20, IDC_STATIC);
+    CreateColumnEditorControl(columnWindow, L"EDIT", L"1",
+        WS_TABSTOP | WS_BORDER | ES_LEFT | ES_AUTOHSCROLL, 330, 102, 92, 24, IDC_COLUMN_INCREMENT_VALUE);
+
+    CreateColumnEditorControl(columnWindow, L"STATIC", UiText(L"\u91CD\u590D\u6B21\u6570", L"Repeat"),
+        SS_LEFTNOWORDWRAP, 30, 144, 80, 20, IDC_STATIC);
+    CreateColumnEditorControl(columnWindow, L"EDIT", L"",
+        WS_TABSTOP | WS_BORDER | ES_LEFT | ES_AUTOHSCROLL, 112, 140, 120, 24, IDC_COLUMN_REPEAT_VALUE);
+
+    CreateColumnEditorControl(columnWindow, L"STATIC", UiText(L"\u5F00\u5934\u8865\u9F50", L"Leading"),
+        SS_LEFTNOWORDWRAP, 256, 144, 72, 20, IDC_STATIC);
+    HWND padding = CreateColumnEditorControl(columnWindow, L"COMBOBOX", L"",
+        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 330, 140, 92, 140, IDC_COLUMN_PADDING_VALUE);
+    if (padding)
+    {
+        SendMessageW(padding, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(UiText(L"\u4E0D\u8865\u9F50", L"None")));
+        SendMessageW(padding, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(UiText(L"\u8865\u96F6", L"Zeros")));
+        SendMessageW(padding, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(UiText(L"\u8865\u7A7A\u683C", L"Spaces")));
+        SendMessageW(padding, CB_SETCURSEL, 0, 0);
+    }
+
+    CreateColumnEditorControl(columnWindow, L"BUTTON", UiText(L"\u786E\u5B9A", L"OK"),
+        BS_OWNERDRAW | WS_TABSTOP, 270, 226, 72, 28, IDOK);
+    CreateColumnEditorControl(columnWindow, L"BUTTON", UiText(L"\u53D6\u6D88", L"Cancel"),
+        BS_OWNERDRAW | WS_TABSTOP, 350, 226, 72, 28, IDCANCEL);
+
+    UpdateColumnEditorModeControls(columnWindow);
+    SetFocus(GetDlgItem(columnWindow, IDC_COLUMN_TEXT_VALUE));
+}
+
+ColumnPaddingMode ReadColumnPaddingMode(HWND columnWindow)
+{
+    const int selection = static_cast<int>(SendMessageW(GetDlgItem(columnWindow, IDC_COLUMN_PADDING_VALUE), CB_GETCURSEL, 0, 0));
+    switch (selection)
+    {
+    case 1:
+        return ColumnPaddingMode::Zero;
+    case 2:
+        return ColumnPaddingMode::Space;
+    default:
+        return ColumnPaddingMode::None;
+    }
+}
+
+bool ReadColumnEditorRequest(HWND columnWindow, ColumnEditRequest& request)
+{
+    request = ColumnEditRequest{};
+    request.mode = g_columnEditorMode;
+
+    if (request.mode == ColumnEditorMode::Text)
+    {
+        request.text = GetControlText(columnWindow, IDC_COLUMN_TEXT_VALUE);
+        if (request.text.empty())
+        {
+            ShowColumnEditorMessage(columnWindow, L"\u8BF7\u8F93\u5165\u8981\u63D2\u5165\u7684\u6587\u672C\u3002", L"Enter the text to insert.");
+            return false;
+        }
+        if (request.text.find_first_of(L"\r\n") != std::wstring::npos)
+        {
+            ShowColumnEditorMessage(columnWindow, L"\u63D2\u5165\u6587\u672C\u4E0D\u80FD\u5305\u542B\u6362\u884C\u7B26\u3002",
+                L"Inserted text cannot contain line breaks.");
+            return false;
+        }
+        return true;
+    }
+
+    const std::wstring initialText = GetControlText(columnWindow, IDC_COLUMN_INITIAL_VALUE);
+    const std::wstring incrementText = GetControlText(columnWindow, IDC_COLUMN_INCREMENT_VALUE);
+    const std::wstring repeatText = GetControlText(columnWindow, IDC_COLUMN_REPEAT_VALUE);
+
+    if (!TryParseInt64(initialText, request.initialValue))
+    {
+        ShowColumnEditorMessage(columnWindow, L"\u521D\u59CB\u503C\u5FC5\u987B\u662F\u6709\u6548\u6574\u6570\u3002", L"Initial value must be a valid integer.");
+        return false;
+    }
+    if (!TryParseInt64(incrementText, request.increment))
+    {
+        ShowColumnEditorMessage(columnWindow, L"\u589E\u91CF\u5FC5\u987B\u662F\u6709\u6548\u6574\u6570\u3002", L"Increment must be a valid integer.");
+        return false;
+    }
+
+    request.repeatCount = 1;
+    if (!TrimWhitespace(repeatText).empty() && !TryParsePositiveInt(repeatText, request.repeatCount))
+    {
+        ShowColumnEditorMessage(columnWindow, L"\u91CD\u590D\u6B21\u6570\u5FC5\u987B\u662F\u5927\u4E8E 0 \u7684\u6574\u6570\uFF0C\u6216\u7559\u7A7A\u3002",
+            L"Repeat count must be an integer greater than 0, or blank.");
+        return false;
+    }
+
+    request.padding = ReadColumnPaddingMode(columnWindow);
+    request.minimumNumberWidth = request.padding == ColumnPaddingMode::None ? 0 : MinimumNumberWidthFromInitialText(initialText);
+    return true;
+}
+
+void ShowColumnEditorWindow()
+{
+    if (g_hColumnEditorWindow)
+    {
+        ShowWindow(g_hColumnEditorWindow, SW_SHOW);
+        SetForegroundWindow(g_hColumnEditorWindow);
+        return;
+    }
+
+    if (Sci(SCI_GETREADONLY))
+    {
+        ShowColumnEditorMessage(hWnd, L"\u5F53\u524D\u6587\u6863\u662F\u53EA\u8BFB\u7684\uFF0C\u65E0\u6CD5\u6267\u884C\u5217\u7F16\u8F91\u3002",
+            L"The current document is read-only, so column editing cannot be applied.");
+        return;
+    }
+
+    ColumnEditSelection selection{};
+    std::wstring error;
+    if (!GetActiveColumnSelection(selection, error))
+    {
+        ShowColumnEditorMessage(hWnd, error);
+        return;
+    }
+
+    RECT ownerRect{};
+    GetWindowRect(hWnd, &ownerRect);
+    RECT windowRect{ 0, 0, 460, 276 };
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    const DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT;
+    AdjustWindowRectEx(&windowRect, style, FALSE, exStyle);
+
+    const int width = windowRect.right - windowRect.left;
+    const int height = windowRect.bottom - windowRect.top;
+    const int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - width) / 2;
+    const int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - height) / 2;
+
+    g_hColumnEditorWindow = CreateWindowExW(exStyle, kColumnEditorWindowClassName,
+        ColumnEditorTitle(), style, x, y, width, height, hWnd, nullptr, hInst, nullptr);
+
+    if (!g_hColumnEditorWindow)
+        return;
+
+    ApplyWindowChromeTheme(g_hColumnEditorWindow);
+    EnableWindow(hWnd, FALSE);
+    ShowWindow(g_hColumnEditorWindow, SW_SHOW);
+    UpdateWindow(g_hColumnEditorWindow);
+}
+
+LRESULT CALLBACK ColumnEditorWndProc(HWND columnWindow, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_CREATE:
+        InitializeColumnEditorControls(columnWindow);
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(columnWindow, &ps);
+        RECT clientRect{};
+        GetClientRect(columnWindow, &clientRect);
+        FillRect(hdc, &clientRect, GetPopupBackBrush());
+        DrawRoundedPanel(hdc, RECT{ 16, 16, 444, 88 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        DrawRoundedPanel(hdc, RECT{ 16, 98, 444, 186 }, ThemePopupSurface(), ThemePopupBorder(), 10);
+        EndPaint(columnWindow, &ps);
+        return 0;
+    }
+
+    case WM_COMMAND:
+    {
+        const int commandId = LOWORD(wParam);
+        const int notification = HIWORD(wParam);
+        if (notification == BN_CLICKED)
+        {
+            if (commandId == IDC_COLUMN_MODE_TEXT || commandId == IDC_COLUMN_MODE_NUMBER)
+            {
+                g_columnEditorMode = commandId == IDC_COLUMN_MODE_TEXT ? ColumnEditorMode::Text : ColumnEditorMode::Number;
+                UpdateColumnEditorModeControls(columnWindow);
+                SetFocus(GetDlgItem(columnWindow,
+                    g_columnEditorMode == ColumnEditorMode::Text ? IDC_COLUMN_TEXT_VALUE : IDC_COLUMN_INITIAL_VALUE));
+                return 0;
+            }
+        }
+
+        if (commandId == IDOK)
+        {
+            ColumnEditRequest request{};
+            if (ReadColumnEditorRequest(columnWindow, request) && ApplyColumnEditRequest(columnWindow, request))
+                DestroyPopupWindowWithoutFlash(columnWindow);
+            return 0;
+        }
+        if (commandId == IDCANCEL)
+        {
+            DestroyPopupWindowWithoutFlash(columnWindow);
+            return 0;
+        }
+        break;
+    }
+
+    case WM_DRAWITEM:
+    {
+        DRAWITEMSTRUCT* drawItem = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (drawItem)
+        {
+            const int controlId = GetDlgCtrlID(drawItem->hwndItem);
+            if (IsColumnEditorOptionControl(controlId))
+                DrawPopupOptionControl(drawItem);
+            else
+                DrawOwnerButton(drawItem);
+        }
+        return TRUE;
+    }
+
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetTextColor(hdc, IsWindowEnabled(reinterpret_cast<HWND>(lParam)) ? ThemePopupText() : ThemeInvisible());
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, ThemePopupInputBack());
+        return reinterpret_cast<LRESULT>(GetPopupInputBrush());
+    }
+
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        HWND control = reinterpret_cast<HWND>(lParam);
+        SetTextColor(hdc, IsWindowEnabled(control) ? ThemePopupText() : ThemeInvisible());
+        SetBkMode(hdc, TRANSPARENT);
+        SetBkColor(hdc, ThemePopupSurface());
+        return reinterpret_cast<LRESULT>(GetPopupSurfaceBrush());
+    }
+
+    case WM_CLOSE:
+        DestroyPopupWindowWithoutFlash(columnWindow);
+        return 0;
+
+    case WM_DESTROY:
+        if (g_hColumnEditorWindow == columnWindow)
+            g_hColumnEditorWindow = nullptr;
+        RestoreMainWindowAfterPopupClose(true);
+        return 0;
+    }
+
+    return DefWindowProc(columnWindow, message, wParam, lParam);
+}
+
 LRESULT CALLBACK AboutWndProc(HWND aboutWindow, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
@@ -6020,7 +6934,7 @@ LRESULT CALLBACK AboutWndProc(HWND aboutWindow, UINT message, WPARAM wParam, LPA
     case WM_COMMAND:
         if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
         {
-            DestroyWindow(aboutWindow);
+            DestroyPopupWindowWithoutFlash(aboutWindow);
             return 0;
         }
         break;
@@ -6040,14 +6954,13 @@ LRESULT CALLBACK AboutWndProc(HWND aboutWindow, UINT message, WPARAM wParam, LPA
     }
 
     case WM_CLOSE:
-        DestroyWindow(aboutWindow);
+        DestroyPopupWindowWithoutFlash(aboutWindow);
         return 0;
 
     case WM_DESTROY:
         if (g_hAboutWindow == aboutWindow)
             g_hAboutWindow = nullptr;
-        EnableWindow(hWnd, TRUE);
-        SetActiveWindow(hWnd);
+        RestoreMainWindowAfterPopupClose(true);
         return 0;
     }
 
@@ -6127,12 +7040,12 @@ LRESULT CALLBACK SettingsWndProc(HWND settingsWindow, UINT message, WPARAM wPara
         if (commandId == IDOK)
         {
             if (ApplySettingsFromWindow(settingsWindow))
-                DestroyWindow(settingsWindow);
+                DestroyPopupWindowWithoutFlash(settingsWindow);
             return 0;
         }
         if (commandId == IDCANCEL)
         {
-            DestroyWindow(settingsWindow);
+            DestroyPopupWindowWithoutFlash(settingsWindow);
             return 0;
         }
         break;
@@ -6183,14 +7096,13 @@ LRESULT CALLBACK SettingsWndProc(HWND settingsWindow, UINT message, WPARAM wPara
     }
 
     case WM_CLOSE:
-        DestroyWindow(settingsWindow);
+        DestroyPopupWindowWithoutFlash(settingsWindow);
         return 0;
 
     case WM_DESTROY:
         if (g_hSettingsWindow == settingsWindow)
             g_hSettingsWindow = nullptr;
-        EnableWindow(hWnd, TRUE);
-        SetActiveWindow(hWnd);
+        RestoreMainWindowAfterPopupClose(true);
         return 0;
     }
 
@@ -6359,6 +7271,16 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     aboutClass.hbrBackground = nullptr;
     aboutClass.lpszClassName = kAboutWindowClassName;
     RegisterClassExW(&aboutClass);
+
+    WNDCLASSEXW columnEditorClass = { 0 };
+    columnEditorClass.cbSize = sizeof(WNDCLASSEX);
+    columnEditorClass.style = CS_HREDRAW | CS_VREDRAW;
+    columnEditorClass.lpfnWndProc = ColumnEditorWndProc;
+    columnEditorClass.hInstance = hInstance;
+    columnEditorClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    columnEditorClass.hbrBackground = nullptr;
+    columnEditorClass.lpszClassName = kColumnEditorWindowClassName;
+    RegisterClassExW(&columnEditorClass);
 
     WNDCLASSEXW splitterPreviewClass = { 0 };
     splitterPreviewClass.cbSize = sizeof(WNDCLASSEX);
