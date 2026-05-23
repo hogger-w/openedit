@@ -216,6 +216,7 @@ HMENU g_hSettingsMenu = nullptr;
 HIMAGELIST g_hFolderTreeImageList = nullptr;
 WNDPROC g_originalFolderTreeProc = nullptr;
 WNDPROC g_originalOpenFilesTreeProc = nullptr;
+WNDPROC g_originalEditorProc = nullptr;
 std::unique_ptr<OpenEditFindWindow> g_findWindow;
 HBRUSH g_hPopupBackBrush = nullptr;
 HBRUSH g_hPopupSurfaceBrush = nullptr;
@@ -369,6 +370,7 @@ LRESULT CALLBACK    AboutWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    ColumnEditorWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    FolderTreeWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    OpenFilesTreeWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    EditorWndProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK    FolderSplitterPreviewWndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 void                SetActiveTabModified(bool modified);
@@ -2213,6 +2215,7 @@ void InitScintillaEditor()
     Sci(SCI_SETCODEPAGE, SC_CP_UTF8, 0);
     Sci(SCI_SETMULTIPLESELECTION, TRUE, 0);
     Sci(SCI_SETADDITIONALSELECTIONTYPING, TRUE, 0);
+    Sci(SCI_SETMULTIPASTE, SC_MULTIPASTE_EACH, 0);
     Sci(SCI_SETADDITIONALCARETSVISIBLE, TRUE, 0);
     Sci(SCI_SETADDITIONALCARETSBLINK, TRUE, 0);
     Sci(SCI_SETVIRTUALSPACEOPTIONS, SCVS_RECTANGULARSELECTION, 0);
@@ -4777,6 +4780,39 @@ bool LoadFileIntoEditor(const std::wstring& path, bool openedFromFolder = false)
     return true;
 }
 
+bool HandleDroppedFiles(HDROP drop)
+{
+    if (!drop)
+        return false;
+
+    const UINT fileCount = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    bool openedAny = false;
+    for (UINT index = 0; index < fileCount; ++index)
+    {
+        const UINT length = DragQueryFileW(drop, index, nullptr, 0);
+        if (length == 0)
+            continue;
+
+        std::wstring path(length + 1, L'\0');
+        const UINT copied = DragQueryFileW(drop, index, path.data(), length + 1);
+        if (copied == 0)
+            continue;
+
+        path.resize(copied);
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY))
+            continue;
+
+        if (LoadFileIntoEditor(path))
+            openedAny = true;
+    }
+
+    DragFinish(drop);
+    if (openedAny)
+        g_restoreFolderInSession = false;
+    return openedAny;
+}
+
 std::wstring PickOpenFilePath(HWND owner)
 {
     wchar_t fileName[MAX_PATH] = L"";
@@ -5432,6 +5468,10 @@ LRESULT CALLBACK FolderTreeWndProc(HWND treeWindow, UINT message, WPARAM wParam,
 {
     switch (message)
     {
+    case WM_DROPFILES:
+        HandleDroppedFiles(reinterpret_cast<HDROP>(wParam));
+        return 0;
+
     case WM_LBUTTONDBLCLK:
     {
         POINT clientPoint{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -5465,6 +5505,10 @@ LRESULT CALLBACK OpenFilesTreeWndProc(HWND treeWindow, UINT message, WPARAM wPar
 {
     switch (message)
     {
+    case WM_DROPFILES:
+        HandleDroppedFiles(reinterpret_cast<HDROP>(wParam));
+        return 0;
+
     case WM_LBUTTONDBLCLK:
     {
         POINT clientPoint{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -5492,6 +5536,20 @@ LRESULT CALLBACK OpenFilesTreeWndProc(HWND treeWindow, UINT message, WPARAM wPar
     return g_originalOpenFilesTreeProc ?
         CallWindowProcW(g_originalOpenFilesTreeProc, treeWindow, message, wParam, lParam) :
         DefWindowProcW(treeWindow, message, wParam, lParam);
+}
+
+LRESULT CALLBACK EditorWndProc(HWND editorWindow, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_DROPFILES:
+        HandleDroppedFiles(reinterpret_cast<HDROP>(wParam));
+        return 0;
+    }
+
+    return g_originalEditorProc ?
+        CallWindowProcW(g_originalEditorProc, editorWindow, message, wParam, lParam) :
+        DefWindowProcW(editorWindow, message, wParam, lParam);
 }
 
 std::vector<FolderItem> EnumerateFolderChildren(const std::wstring& folderPath)
@@ -6569,7 +6627,7 @@ void InitializeAboutControls(HWND aboutWindow)
 
     CreateSettingsControl(aboutWindow, L"STATIC", L"openedit",
         SS_LEFTNOWORDWRAP, 78, 30, 220, 24, IDC_STATIC);
-    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.3", L"Version 1.0.3"),
+    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.4", L"Version 1.0.4"),
         SS_LEFTNOWORDWRAP, 78, 58, 220, 20, IDC_STATIC);
     SYSTEMTIME localTime{};
     GetLocalTime(&localTime);
@@ -7352,6 +7410,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     }
 
+    case WM_DROPFILES:
+        HandleDroppedFiles(reinterpret_cast<HDROP>(wParam));
+        return 0;
+
     case WM_COMMAND:
     {
         int wmId = LOWORD(wParam);
@@ -7596,6 +7658,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_CREATE:
     {
         ::hWnd = hWnd;
+        DragAcceptFiles(hWnd, TRUE);
         ApplyWindowChromeTheme(hWnd);
         UpdateMainMenuText();
 
@@ -7613,6 +7676,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         if (g_hOpenFilesTree)
         {
+            DragAcceptFiles(g_hOpenFilesTree, TRUE);
             TreeView_SetExtendedStyle(g_hOpenFilesTree, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
             g_originalOpenFilesTreeProc = reinterpret_cast<WNDPROC>(
                 SetWindowLongPtrW(g_hOpenFilesTree, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(OpenFilesTreeWndProc)));
@@ -7635,6 +7699,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         if (g_hFolderTree)
         {
+            DragAcceptFiles(g_hFolderTree, TRUE);
             TreeView_SetExtendedStyle(g_hFolderTree, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
             g_originalFolderTreeProc = reinterpret_cast<WNDPROC>(
                 SetWindowLongPtrW(g_hFolderTree, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(FolderTreeWndProc)));
@@ -7656,7 +7721,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         );
 
         if (g_hTabBar)
+        {
+            DragAcceptFiles(g_hTabBar, TRUE);
             SendMessageW(g_hTabBar, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+        }
 
         g_hStatusBar = CreateWindowExW(
             0,
@@ -7671,7 +7739,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         );
 
         if (g_hStatusBar)
+        {
+            DragAcceptFiles(g_hStatusBar, TRUE);
             SendMessageW(g_hStatusBar, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+        }
 
         // 创建Scintilla子窗口
         g_hSci = CreateWindowExW(
@@ -7688,6 +7759,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         
         if (g_hSci)
         {
+            DragAcceptFiles(g_hSci, TRUE);
+            g_originalEditorProc = reinterpret_cast<WNDPROC>(
+                SetWindowLongPtrW(g_hSci, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(EditorWndProc)));
             ApplyControlTheme(g_hSci);
             g_pSciFn = reinterpret_cast<SciFnDirect>(SendMessage(g_hSci, SCI_GETDIRECTFUNCTION, 0, 0));
             g_pSciPtr = static_cast<sptr_t>(SendMessage(g_hSci, SCI_GETDIRECTPOINTER, 0, 0));
@@ -8224,6 +8298,10 @@ LRESULT CALLBACK TabBarWndProc(HWND tabBar, UINT message, WPARAM wParam, LPARAM 
 {
     switch (message)
     {
+    case WM_DROPFILES:
+        HandleDroppedFiles(reinterpret_cast<HDROP>(wParam));
+        return 0;
+
     case WM_ERASEBKGND:
         return 1;
 
@@ -8556,6 +8634,10 @@ LRESULT CALLBACK StatusBarWndProc(HWND statusBar, UINT message, WPARAM wParam, L
 {
     switch (message)
     {
+    case WM_DROPFILES:
+        HandleDroppedFiles(reinterpret_cast<HDROP>(wParam));
+        return 0;
+
     case WM_ERASEBKGND:
         return 1;
 
