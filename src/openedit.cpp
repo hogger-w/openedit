@@ -8,6 +8,9 @@
 #include <commdlg.h>
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <propsys.h>
+#include <propkey.h>
+#include <propvarutil.h>
 #include <uxtheme.h>
 #include <shellapi.h>
 #include <shobjidl.h>
@@ -30,6 +33,7 @@
 #include <vector>
 
 #pragma comment(lib, "Dwmapi.lib")
+#pragma comment(lib, "Propsys.lib")
 #pragma comment(lib, "UxTheme.lib")
 
 #define MAX_LOADSTRING 100
@@ -169,6 +173,8 @@ const wchar_t kSettingsWindowClassName[] = L"OpenEditSettingsWindow";
 const wchar_t kAboutWindowClassName[] = L"OpenEditAboutWindow";
 const wchar_t kFolderSplitterPreviewClassName[] = L"OpenEditFolderSplitterPreview";
 const wchar_t kColumnEditorWindowClassName[] = L"OpenEditColumnEditorWindow";
+const wchar_t kAppDisplayName[] = L"openedit";
+const wchar_t kAppUserModelId[] = L"openedit";
 
 enum class AppTheme
 {
@@ -348,6 +354,10 @@ struct DocumentTab
     int languageCommand = IDM_LANG_TEXT;
     DocumentEncoding encoding = DocumentEncoding::Utf8;
     int eolMode = SC_EOL_CRLF;
+    sptr_t caretPosition = 0;
+    sptr_t anchorPosition = 0;
+    sptr_t firstVisibleLine = 0;
+    sptr_t xOffset = 0;
     bool modified = false;
     bool untitled = true;
     bool openedFromFolder = false;
@@ -898,6 +908,78 @@ void ApplyControlTheme(HWND window)
         return;
 
     SetWindowTheme(window, IsDarkTheme() ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+}
+
+HICON LoadSharedAppIcon(HINSTANCE instance, int width, int height)
+{
+    return static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_OPENEDIT), IMAGE_ICON,
+        width, height, LR_DEFAULTCOLOR | LR_SHARED));
+}
+
+void ApplyWindowAppIcons(HWND window)
+{
+    if (!window || !hInst)
+        return;
+
+    SendMessageW(window, WM_SETICON, ICON_BIG,
+        reinterpret_cast<LPARAM>(LoadSharedAppIcon(hInst, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON))));
+    SendMessageW(window, WM_SETICON, ICON_SMALL,
+        reinterpret_cast<LPARAM>(LoadSharedAppIcon(hInst, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON))));
+}
+
+std::wstring GetExecutablePath()
+{
+    wchar_t path[MAX_PATH]{};
+    constexpr DWORD pathCapacity = static_cast<DWORD>(sizeof(path) / sizeof(path[0]));
+    const DWORD length = GetModuleFileNameW(nullptr, path, pathCapacity);
+    if (length == 0 || length >= pathCapacity)
+        return L"";
+    return std::wstring(path, length);
+}
+
+std::wstring QuoteCommandPath(const std::wstring& path)
+{
+    if (path.empty())
+        return L"";
+    return L"\"" + path + L"\"";
+}
+
+void SetTaskbarStringProperty(IPropertyStore* propertyStore, REFPROPERTYKEY key, const wchar_t* value)
+{
+    if (!propertyStore || !value || !*value)
+        return;
+
+    PROPVARIANT propertyValue{};
+    if (SUCCEEDED(InitPropVariantFromString(value, &propertyValue)))
+    {
+        propertyStore->SetValue(key, propertyValue);
+        PropVariantClear(&propertyValue);
+    }
+}
+
+void SetTaskbarStringProperty(IPropertyStore* propertyStore, REFPROPERTYKEY key, const std::wstring& value)
+{
+    SetTaskbarStringProperty(propertyStore, key, value.c_str());
+}
+
+void ConfigureTaskbarProperties(HWND window)
+{
+    if (!window)
+        return;
+
+    IPropertyStore* propertyStore = nullptr;
+    if (FAILED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&propertyStore))))
+        return;
+
+    SetTaskbarStringProperty(propertyStore, PKEY_AppUserModel_ID, kAppUserModelId);
+    SetTaskbarStringProperty(propertyStore, PKEY_AppUserModel_RelaunchDisplayNameResource, kAppDisplayName);
+
+    const std::wstring executablePath = GetExecutablePath();
+    if (!executablePath.empty())
+        SetTaskbarStringProperty(propertyStore, PKEY_AppUserModel_RelaunchCommand, QuoteCommandPath(executablePath));
+
+    propertyStore->Commit();
+    propertyStore->Release();
 }
 
 void ApplyFolderPaneTreeTheme(HWND treeWindow)
@@ -2253,6 +2335,7 @@ void ApplyAppTheme()
     g_hMenuBackBrush = nullptr;
 
     ApplyWindowChromeTheme(hWnd);
+    ApplyWindowAppIcons(hWnd);
     ApplyMainMenuTheme();
 
     if (g_hFolderTree || g_hOpenFilesTree)
@@ -2281,6 +2364,7 @@ void ApplyAppTheme()
     if (g_hAboutWindow && IsWindow(g_hAboutWindow))
     {
         ApplyWindowChromeTheme(g_hAboutWindow);
+        ApplyWindowAppIcons(g_hAboutWindow);
         RedrawWindow(g_hAboutWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
     }
     if (g_hColumnEditorWindow && IsWindow(g_hColumnEditorWindow))
@@ -3798,6 +3882,12 @@ bool HandleOpenFilesTreeItemClickAt(POINT clientPoint)
     return true;
 }
 
+sptr_t ClampEditorPosition(sptr_t position)
+{
+    const sptr_t length = Sci(SCI_GETLENGTH);
+    return (std::min)((std::max)(position, static_cast<sptr_t>(0)), length);
+}
+
 void CaptureActiveTab()
 {
     if (!IsActiveTabValid() || g_loadingTabContent)
@@ -3807,6 +3897,10 @@ void CaptureActiveTab()
     tab.text = GetEditorText();
     tab.languageCommand = g_currentLanguageCommand;
     tab.eolMode = static_cast<int>(Sci(SCI_GETEOLMODE));
+    tab.caretPosition = Sci(SCI_GETCURRENTPOS);
+    tab.anchorPosition = Sci(SCI_GETANCHOR);
+    tab.firstVisibleLine = Sci(SCI_GETFIRSTVISIBLELINE);
+    tab.xOffset = Sci(SCI_GETXOFFSET);
     tab.modified = tab.text != tab.savedText;
 }
 
@@ -3836,18 +3930,18 @@ DocumentTab CreateDefaultUntitledTab()
 
 void UpdateWindowTitle()
 {
-    std::wstring title = L"openedit";
+    std::wstring title = kAppDisplayName;
     if (IsActiveTabValid())
     {
-        title = GetTabDisplayTitle(g_tabs[g_activeTabIndex]) + L" - openedit";
+        title = GetTabDisplayTitle(g_tabs[g_activeTabIndex]) + L" - " + kAppDisplayName;
     }
     else if (!g_currentFilePath.empty())
     {
-        title = FileNameFromPath(g_currentFilePath) + L" - openedit";
+        title = FileNameFromPath(g_currentFilePath) + L" - " + kAppDisplayName;
     }
     else if (!g_currentFolderPath.empty())
     {
-        title = FileNameFromPath(g_currentFolderPath) + L" - openedit";
+        title = FileNameFromPath(g_currentFolderPath) + L" - " + kAppDisplayName;
     }
     SetWindowTextW(hWnd, title.c_str());
 }
@@ -3870,6 +3964,13 @@ void LoadTabIntoEditor(int tabIndex)
         ApplyLanguage(tab.languageCommand);
         Sci(SCI_EMPTYUNDOBUFFER);
         Sci(SCI_SETSAVEPOINT);
+        const sptr_t anchorPosition = ClampEditorPosition(tab.anchorPosition);
+        const sptr_t caretPosition = ClampEditorPosition(tab.caretPosition);
+        const sptr_t firstVisibleLine = (std::max)(tab.firstVisibleLine, static_cast<sptr_t>(0));
+        const sptr_t xOffset = (std::max)(tab.xOffset, static_cast<sptr_t>(0));
+        Sci(SCI_SETSEL, static_cast<uptr_t>(anchorPosition), caretPosition);
+        Sci(SCI_SETFIRSTVISIBLELINE, static_cast<uptr_t>(firstVisibleLine), 0);
+        Sci(SCI_SETXOFFSET, static_cast<uptr_t>(xOffset), 0);
     }
 
     g_loadingTabContent = false;
@@ -6621,13 +6722,14 @@ void ShowSettingsWindow()
 void InitializeAboutControls(HWND aboutWindow)
 {
     HWND icon = CreateSettingsControl(aboutWindow, L"STATIC", L"",
-        SS_ICON, 26, 34, 36, 36, IDC_STATIC);
+        SS_ICON | SS_CENTERIMAGE, 26, 34, 36, 36, IDC_STATIC);
     if (icon)
-        SendMessageW(icon, STM_SETICON, reinterpret_cast<WPARAM>(LoadIcon(hInst, MAKEINTRESOURCE(IDI_OPENEDIT))), 0);
+        SendMessageW(icon, STM_SETICON,
+            reinterpret_cast<WPARAM>(LoadSharedAppIcon(hInst, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON))), 0);
 
     CreateSettingsControl(aboutWindow, L"STATIC", L"openedit",
         SS_LEFTNOWORDWRAP, 78, 30, 220, 24, IDC_STATIC);
-    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.4", L"Version 1.0.4"),
+    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.5", L"Version 1.0.5"),
         SS_LEFTNOWORDWRAP, 78, 58, 220, 20, IDC_STATIC);
     SYSTEMTIME localTime{};
     GetLocalTime(&localTime);
@@ -6669,6 +6771,7 @@ void ShowAboutWindow()
         return;
 
     ApplyWindowChromeTheme(g_hAboutWindow);
+    ApplyWindowAppIcons(g_hAboutWindow);
     EnableWindow(hWnd, FALSE);
     ShowWindow(g_hAboutWindow, SW_SHOW);
     UpdateWindow(g_hAboutWindow);
@@ -7217,6 +7320,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(lpCmdLine);
 
     const HRESULT coInitializeResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    SetCurrentProcessExplicitAppUserModelID(kAppUserModelId);
     INITCOMMONCONTROLSEX commonControls{};
     commonControls.dwSize = sizeof(commonControls);
     commonControls.dwICC = ICC_TREEVIEW_CLASSES | ICC_WIN95_CLASSES | ICC_BAR_CLASSES | ICC_HOTKEY_CLASS;
@@ -7325,9 +7429,11 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     aboutClass.style = CS_HREDRAW | CS_VREDRAW;
     aboutClass.lpfnWndProc = AboutWndProc;
     aboutClass.hInstance = hInstance;
+    aboutClass.hIcon = LoadSharedAppIcon(hInstance, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
     aboutClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
     aboutClass.hbrBackground = nullptr;
     aboutClass.lpszClassName = kAboutWindowClassName;
+    aboutClass.hIconSm = LoadSharedAppIcon(hInstance, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
     RegisterClassExW(&aboutClass);
 
     WNDCLASSEXW columnEditorClass = { 0 };
@@ -7355,12 +7461,12 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     wcex.style = CS_HREDRAW | CS_VREDRAW;
     wcex.lpfnWndProc = WndProc;
     wcex.hInstance = hInstance;
-    wcex.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_OPENEDIT));
+    wcex.hIcon = LoadSharedAppIcon(hInstance, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
     wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wcex.hbrBackground = nullptr;
     wcex.lpszMenuName = MAKEINTRESOURCEW(IDC_OPENEDIT);
     wcex.lpszClassName = szWindowClass;
-    wcex.hIconSm = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
+    wcex.hIconSm = LoadSharedAppIcon(hInstance, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
 
     return RegisterClassExW(&wcex);
 }
@@ -7374,6 +7480,9 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
         CW_USEDEFAULT, 0, 800, 600, nullptr, nullptr, hInstance, nullptr);
 
     if (!hWnd) return FALSE;
+
+    ApplyWindowAppIcons(hWnd);
+    ConfigureTaskbarProperties(hWnd);
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
