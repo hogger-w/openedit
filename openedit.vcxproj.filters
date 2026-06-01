@@ -70,9 +70,6 @@
     <ResourceCompile Include="openedit.rc">
       <Filter>资源文件</Filter>
     </ResourceCompile>
-    <ResourceCompile Include="lib\lexilla\src\LexillaVersion.rc">
-      <Filter>资源文件</Filter>
-    </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
     <Image Include="assets\oe.ico">

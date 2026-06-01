@@ -206,7 +206,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="lib\lexilla\src\LexillaVersion.rc" />
     <ResourceCompile Include="openedit.rc" />
   </ItemGroup>
   <ItemGroup>
