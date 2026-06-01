@@ -69,6 +69,10 @@ constexpr int kTabWidth = 100;
 constexpr int kTabSaveIconSize = 12;
 constexpr int kTabCloseSize = 14;
 constexpr int kTabCornerRadius = 7;
+constexpr int kDefaultMainWindowWidth = 800;
+constexpr int kDefaultMainWindowHeight = 600;
+constexpr int kMinRestoredMainWindowWidth = 200;
+constexpr int kMinRestoredMainWindowHeight = 160;
 constexpr int kLineNumberMargin = 0;
 constexpr int kFoldMargin = 1;
 constexpr int kViewMenuIndex = 3;
@@ -188,6 +192,13 @@ enum class AppLanguage
     English,
 };
 
+struct MainWindowPlacement
+{
+    bool hasPlacement = false;
+    RECT normalRect{ 0, 0, kDefaultMainWindowWidth, kDefaultMainWindowHeight };
+    bool maximized = false;
+};
+
 enum class ColumnEditorMode
 {
     Text,
@@ -244,6 +255,7 @@ int g_folderSplitterPreviewWidth = -1;
 int g_openFilesPaneHeight = kFolderPaneOpenFilesDefaultHeight;
 bool g_restorePreviousFilesOnStartup = true;
 bool g_restoreFolderInSession = false;
+MainWindowPlacement g_mainWindowPlacement;
 AppTheme g_settingsDraftTheme = AppTheme::Dark;
 AppLanguage g_settingsDraftLanguage = AppLanguage::Chinese;
 ColumnEditorMode g_columnEditorMode = ColumnEditorMode::Text;
@@ -4965,6 +4977,142 @@ int ParseSessionInt(const std::string& text, int fallback)
     return value * sign;
 }
 
+bool TryParseSettingsInt(const std::string& text, int& value)
+{
+    constexpr int kInvalidSettingsInt = (std::numeric_limits<int>::min)();
+    value = ParseSessionInt(text, kInvalidSettingsInt);
+    return value != kInvalidSettingsInt;
+}
+
+bool IsRestoredMainWindowRectSizeValid(const RECT& rect)
+{
+    const long long width = static_cast<long long>(rect.right) - rect.left;
+    const long long height = static_cast<long long>(rect.bottom) - rect.top;
+    return width >= kMinRestoredMainWindowWidth &&
+        height >= kMinRestoredMainWindowHeight &&
+        width <= (std::numeric_limits<int>::max)() &&
+        height <= (std::numeric_limits<int>::max)();
+}
+
+bool ParseMainWindowPlacement(const std::string& text, MainWindowPlacement& placement)
+{
+    std::array<int, 5> values{};
+    size_t start = 0;
+    for (size_t index = 0; index < values.size(); ++index)
+    {
+        const bool lastField = index + 1 == values.size();
+        const size_t end = lastField ? text.size() : text.find(',', start);
+        if (end == std::string::npos || start > text.size())
+            return false;
+
+        if (!TryParseSettingsInt(text.substr(start, end - start), values[index]))
+            return false;
+
+        start = end + 1;
+    }
+
+    const long long right = static_cast<long long>(values[0]) + values[2];
+    const long long bottom = static_cast<long long>(values[1]) + values[3];
+    if (right > (std::numeric_limits<int>::max)() ||
+        right < (std::numeric_limits<int>::min)() ||
+        bottom > (std::numeric_limits<int>::max)() ||
+        bottom < (std::numeric_limits<int>::min)())
+    {
+        return false;
+    }
+
+    RECT normalRect{
+        values[0],
+        values[1],
+        static_cast<int>(right),
+        static_cast<int>(bottom)
+    };
+    if (!IsRestoredMainWindowRectSizeValid(normalRect))
+        return false;
+
+    placement.hasPlacement = true;
+    placement.normalRect = normalRect;
+    placement.maximized = values[4] != 0;
+    return true;
+}
+
+void CaptureMainWindowPlacement()
+{
+    if (!hWnd || !IsWindow(hWnd))
+        return;
+
+    WINDOWPLACEMENT placement{};
+    placement.length = sizeof(placement);
+    if (!GetWindowPlacement(hWnd, &placement))
+        return;
+
+    if (!IsRestoredMainWindowRectSizeValid(placement.rcNormalPosition))
+        return;
+
+    g_mainWindowPlacement.hasPlacement = true;
+    g_mainWindowPlacement.normalRect = placement.rcNormalPosition;
+    g_mainWindowPlacement.maximized = placement.showCmd == SW_SHOWMAXIMIZED ||
+        (placement.flags & WPF_RESTORETOMAXIMIZED) != 0;
+}
+
+bool AdjustMainWindowPlacementToMonitor(RECT& rect)
+{
+    if (!IsRestoredMainWindowRectSizeValid(rect))
+        return false;
+
+    HMONITOR monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST);
+    if (!monitor)
+        return false;
+
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoW(monitor, &monitorInfo))
+        return false;
+
+    const RECT workArea = monitorInfo.rcWork;
+    const int workWidth = workArea.right - workArea.left;
+    const int workHeight = workArea.bottom - workArea.top;
+    if (workWidth <= 0 || workHeight <= 0)
+        return false;
+
+    int width = static_cast<int>(static_cast<long long>(rect.right) - rect.left);
+    int height = static_cast<int>(static_cast<long long>(rect.bottom) - rect.top);
+    width = (std::min)(width, workWidth);
+    height = (std::min)(height, workHeight);
+
+    if (rect.left < workArea.left)
+        rect.left = workArea.left;
+    if (rect.top < workArea.top)
+        rect.top = workArea.top;
+    if (rect.left + width > workArea.right)
+        rect.left = workArea.right - width;
+    if (rect.top + height > workArea.bottom)
+        rect.top = workArea.bottom - height;
+
+    rect.right = rect.left + width;
+    rect.bottom = rect.top + height;
+    return true;
+}
+
+bool ApplyMainWindowPlacement(HWND window, int nCmdShow)
+{
+    if (!window || !g_mainWindowPlacement.hasPlacement)
+        return false;
+
+    RECT normalRect = g_mainWindowPlacement.normalRect;
+    if (!AdjustMainWindowPlacementToMonitor(normalRect))
+        return false;
+
+    WINDOWPLACEMENT placement{};
+    placement.length = sizeof(placement);
+    placement.rcNormalPosition = normalRect;
+    placement.showCmd = g_mainWindowPlacement.maximized ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
+    if (nCmdShow == SW_SHOWMINIMIZED || nCmdShow == SW_SHOWMINNOACTIVE || nCmdShow == SW_SHOWMAXIMIZED)
+        placement.showCmd = nCmdShow;
+
+    return SetWindowPlacement(window, &placement) != FALSE;
+}
+
 char HexDigit(unsigned char value)
 {
     return value < 10 ? static_cast<char>('0' + value) : static_cast<char>('A' + (value - 10));
@@ -5107,6 +5255,8 @@ void LoadAppSettings()
 
         if (line.rfind("restorePreviousFiles=", 0) == 0)
             g_restorePreviousFilesOnStartup = ParseSessionInt(line.substr(21), 1) != 0;
+        else if (line.rfind("windowPlacement=", 0) == 0)
+            ParseMainWindowPlacement(line.substr(16), g_mainWindowPlacement);
         else if (line.rfind("shortcut.", 0) == 0)
         {
             const size_t equals = line.find('=');
@@ -5129,8 +5279,24 @@ void LoadAppSettings()
 
 void SaveAppSettings()
 {
+    CaptureMainWindowPlacement();
+
     std::string settings = std::string("restorePreviousFiles=") +
         (g_restorePreviousFilesOnStartup ? "1\n" : "0\n");
+    if (g_mainWindowPlacement.hasPlacement)
+    {
+        const RECT& normalRect = g_mainWindowPlacement.normalRect;
+        settings += "windowPlacement=";
+        settings += std::to_string(normalRect.left);
+        settings += ",";
+        settings += std::to_string(normalRect.top);
+        settings += ",";
+        settings += std::to_string(normalRect.right - normalRect.left);
+        settings += ",";
+        settings += std::to_string(normalRect.bottom - normalRect.top);
+        settings += ",";
+        settings += (g_mainWindowPlacement.maximized ? "1\n" : "0\n");
+    }
     for (const ShortcutBinding& shortcut : g_shortcutBindings)
     {
         settings += "shortcut.";
@@ -6729,7 +6895,7 @@ void InitializeAboutControls(HWND aboutWindow)
 
     CreateSettingsControl(aboutWindow, L"STATIC", L"openedit",
         SS_LEFTNOWORDWRAP, 78, 30, 220, 24, IDC_STATIC);
-    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.5", L"Version 1.0.5"),
+    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.6", L"Version 1.0.6"),
         SS_LEFTNOWORDWRAP, 78, 58, 220, 20, IDC_STATIC);
     SYSTEMTIME localTime{};
     GetLocalTime(&localTime);
@@ -7477,14 +7643,15 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
     // 创建主窗口
     hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-        CW_USEDEFAULT, 0, 800, 600, nullptr, nullptr, hInstance, nullptr);
+        CW_USEDEFAULT, 0, kDefaultMainWindowWidth, kDefaultMainWindowHeight, nullptr, nullptr, hInstance, nullptr);
 
     if (!hWnd) return FALSE;
 
     ApplyWindowAppIcons(hWnd);
     ConfigureTaskbarProperties(hWnd);
 
-    ShowWindow(hWnd, nCmdShow);
+    if (!ApplyMainWindowPlacement(hWnd, nCmdShow))
+        ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
 
     return TRUE;
