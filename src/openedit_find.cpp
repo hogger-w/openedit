@@ -176,13 +176,52 @@ bool SelectionMatchesSearch(const std::string& needle, DWORD findOptions)
     return result == start && Sci(SCI_GETTARGETSTART) == start && Sci(SCI_GETTARGETEND) == end;
 }
 
+std::string ConvertDollarCapturesForScintilla(const std::string& replacement)
+{
+    std::string converted;
+    converted.reserve(replacement.size());
+
+    for (size_t i = 0; i < replacement.size(); ++i)
+    {
+        if (replacement[i] == '$' && i + 1 < replacement.size())
+        {
+            const char next = replacement[i + 1];
+            if (next >= '0' && next <= '9')
+            {
+                converted.push_back('\\');
+                converted.push_back(next);
+                ++i;
+                continue;
+            }
+            if (next == '$')
+            {
+                converted.push_back('$');
+                ++i;
+                continue;
+            }
+        }
+
+        converted.push_back(replacement[i]);
+    }
+
+    return converted;
+}
+
+std::string PrepareReplacementText(const wchar_t* replaceText, DWORD findOptions)
+{
+    std::string replacement = WideToUtf8(replaceText ? replaceText : L"");
+    if (findOptions & kFindOptionRegex)
+        replacement = ConvertDollarCapturesForScintilla(replacement);
+    return replacement;
+}
+
 bool ReplaceCurrentSelection(const wchar_t* findText, const wchar_t* replaceText, DWORD findOptions)
 {
     const std::string needle = WideToUtf8(findText ? findText : L"");
     if (needle.empty() || !SelectionMatchesSearch(needle, findOptions))
         return false;
 
-    const std::string replacement = WideToUtf8(replaceText ? replaceText : L"");
+    const std::string replacement = PrepareReplacementText(replaceText, findOptions);
     const sptr_t targetStart = Sci(SCI_GETTARGETSTART);
     const unsigned int replaceMessage = (findOptions & kFindOptionRegex) ? SCI_REPLACETARGETRE : SCI_REPLACETARGET;
     const sptr_t replacementLength = Sci(replaceMessage,
@@ -205,7 +244,7 @@ int ReplaceAllMatches(const wchar_t* findText, const wchar_t* replaceText, DWORD
     if (needle.empty())
         return 0;
 
-    const std::string replacement = WideToUtf8(replaceText ? replaceText : L"");
+    const std::string replacement = PrepareReplacementText(replaceText, findOptions);
     int replacements = 0;
     sptr_t start = 0;
     sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
