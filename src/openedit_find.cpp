@@ -12,9 +12,69 @@ int GetScintillaSearchFlags(DWORD findOptions)
     return flags;
 }
 
+std::string DecodeRegexLineEndingEscapes(const std::string& pattern)
+{
+    std::string decoded;
+    decoded.reserve(pattern.size());
+
+    for (size_t i = 0; i < pattern.size(); ++i)
+    {
+        if (pattern[i] != '\\' || i + 1 >= pattern.size())
+        {
+            decoded.push_back(pattern[i]);
+            continue;
+        }
+
+        const char next = pattern[i + 1];
+        if (next == 'r')
+        {
+            decoded.push_back('\r');
+            ++i;
+        }
+        else if (next == 'n')
+        {
+            decoded.push_back('\n');
+            ++i;
+        }
+        else
+        {
+            decoded.push_back(pattern[i]);
+            decoded.push_back(next);
+            ++i;
+        }
+    }
+
+    return decoded;
+}
+
+std::string PrepareFindText(const wchar_t* findText, DWORD findOptions)
+{
+    std::string needle = WideToUtf8(findText ? findText : L"");
+    if (findOptions & kFindOptionRegex)
+        needle = DecodeRegexLineEndingEscapes(needle);
+    return needle;
+}
+
+bool IsRegexLineEndingLiteral(const std::string& needle, DWORD findOptions)
+{
+    if (!(findOptions & kFindOptionRegex))
+        return false;
+
+    return needle == "\r\n" || needle == "\n" || needle == "\r";
+}
+
+bool UseScintillaRegexReplacement(const std::string& needle, DWORD findOptions)
+{
+    return (findOptions & kFindOptionRegex) && !IsRegexLineEndingLiteral(needle, findOptions);
+}
+
 sptr_t SearchTargetRange(sptr_t start, sptr_t end, const std::string& needle, DWORD findOptions)
 {
-    Sci(SCI_SETSEARCHFLAGS, GetScintillaSearchFlags(findOptions), 0);
+    DWORD effectiveFindOptions = findOptions;
+    if (IsRegexLineEndingLiteral(needle, findOptions))
+        effectiveFindOptions &= ~kFindOptionRegex;
+
+    Sci(SCI_SETSEARCHFLAGS, GetScintillaSearchFlags(effectiveFindOptions), 0);
     Sci(SCI_SETTARGETRANGE, static_cast<uptr_t>(start), end);
     return Sci(SCI_SEARCHINTARGET, static_cast<uptr_t>(needle.size()), reinterpret_cast<sptr_t>(needle.c_str()));
 }
@@ -56,6 +116,86 @@ void ClearWordHighlights()
     Sci(SCI_SETINDICATORCURRENT, kWordHighlightIndicator, 0);
     Sci(SCI_INDICATORCLEARRANGE, 0, Sci(SCI_GETTEXTLENGTH));
     g_highlightedWord.clear();
+}
+
+void ClearSearchMarks()
+{
+    if (!g_hSci)
+        return;
+
+    Sci(SCI_SETINDICATORCURRENT, kSearchMarkIndicator, 0);
+    Sci(SCI_INDICATORCLEARRANGE, 0, Sci(SCI_GETTEXTLENGTH));
+}
+
+int FillSearchMarks(const std::string& needle, DWORD findOptions)
+{
+    ClearSearchMarks();
+    if (needle.empty())
+        return 0;
+
+    int count = 0;
+    sptr_t start = 0;
+    const sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
+
+    Sci(SCI_SETINDICATORCURRENT, kSearchMarkIndicator, 0);
+    Sci(SCI_SETINDICATORVALUE, 1, 0);
+
+    while (start <= documentLength)
+    {
+        const sptr_t result = SearchTargetRange(start, documentLength, needle, findOptions);
+        if (result < 0)
+            break;
+
+        ++count;
+        const sptr_t targetStart = Sci(SCI_GETTARGETSTART);
+        const sptr_t targetEnd = Sci(SCI_GETTARGETEND);
+        if (targetEnd > targetStart)
+            Sci(SCI_INDICATORFILLRANGE, static_cast<uptr_t>(targetStart), targetEnd - targetStart);
+
+        start = targetEnd > targetStart ? targetEnd : PositionAfter(targetStart);
+    }
+
+    return count;
+}
+
+void ClearActiveTabSearchMarkState()
+{
+    if (!IsActiveTabValid())
+        return;
+
+    DocumentTab& tab = g_tabs[g_activeTabIndex];
+    tab.hasSearchMarks = false;
+    tab.searchMarkText.clear();
+    tab.searchMarkOptions = 0;
+}
+
+void StoreActiveTabSearchMarkState(const wchar_t* findText, DWORD findOptions)
+{
+    if (!IsActiveTabValid())
+        return;
+
+    DocumentTab& tab = g_tabs[g_activeTabIndex];
+    tab.hasSearchMarks = true;
+    tab.searchMarkText = findText ? findText : L"";
+    tab.searchMarkOptions = findOptions & kFindOptionMask;
+}
+
+void RestoreSearchMarksForActiveTab()
+{
+    if (!IsActiveTabValid())
+    {
+        ClearSearchMarks();
+        return;
+    }
+
+    const DocumentTab& tab = g_tabs[g_activeTabIndex];
+    if (!tab.hasSearchMarks)
+    {
+        ClearSearchMarks();
+        return;
+    }
+
+    FillSearchMarks(PrepareFindText(tab.searchMarkText.c_str(), tab.searchMarkOptions), tab.searchMarkOptions);
 }
 
 void HighlightWordOccurrences(const std::string& word)
@@ -132,7 +272,7 @@ bool SelectCurrentTarget(bool focusEditor)
 
 bool FindTextInEditor(const wchar_t* findText, DWORD findOptions, bool searchDown, bool wrap, bool focusEditor)
 {
-    const std::string needle = WideToUtf8(findText ? findText : L"");
+    const std::string needle = PrepareFindText(findText, findOptions);
     if (needle.empty())
         return false;
 
@@ -207,23 +347,24 @@ std::string ConvertDollarCapturesForScintilla(const std::string& replacement)
     return converted;
 }
 
-std::string PrepareReplacementText(const wchar_t* replaceText, DWORD findOptions)
+std::string PrepareReplacementText(const wchar_t* replaceText, bool regexReplacement)
 {
     std::string replacement = WideToUtf8(replaceText ? replaceText : L"");
-    if (findOptions & kFindOptionRegex)
+    if (regexReplacement)
         replacement = ConvertDollarCapturesForScintilla(replacement);
     return replacement;
 }
 
 bool ReplaceCurrentSelection(const wchar_t* findText, const wchar_t* replaceText, DWORD findOptions)
 {
-    const std::string needle = WideToUtf8(findText ? findText : L"");
+    const std::string needle = PrepareFindText(findText, findOptions);
     if (needle.empty() || !SelectionMatchesSearch(needle, findOptions))
         return false;
 
-    const std::string replacement = PrepareReplacementText(replaceText, findOptions);
+    const bool regexReplacement = UseScintillaRegexReplacement(needle, findOptions);
+    const std::string replacement = PrepareReplacementText(replaceText, regexReplacement);
     const sptr_t targetStart = Sci(SCI_GETTARGETSTART);
-    const unsigned int replaceMessage = (findOptions & kFindOptionRegex) ? SCI_REPLACETARGETRE : SCI_REPLACETARGET;
+    const unsigned int replaceMessage = regexReplacement ? SCI_REPLACETARGETRE : SCI_REPLACETARGET;
     const sptr_t replacementLength = Sci(replaceMessage,
         static_cast<uptr_t>(replacement.size()), reinterpret_cast<sptr_t>(replacement.c_str()));
     if (replacementLength >= 0)
@@ -240,11 +381,12 @@ sptr_t PositionAfter(sptr_t position)
 
 int ReplaceAllMatches(const wchar_t* findText, const wchar_t* replaceText, DWORD findOptions)
 {
-    const std::string needle = WideToUtf8(findText ? findText : L"");
+    const std::string needle = PrepareFindText(findText, findOptions);
     if (needle.empty())
         return 0;
 
-    const std::string replacement = PrepareReplacementText(replaceText, findOptions);
+    const bool regexReplacement = UseScintillaRegexReplacement(needle, findOptions);
+    const std::string replacement = PrepareReplacementText(replaceText, regexReplacement);
     int replacements = 0;
     sptr_t start = 0;
     sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
@@ -258,7 +400,7 @@ int ReplaceAllMatches(const wchar_t* findText, const wchar_t* replaceText, DWORD
 
         const sptr_t targetStart = Sci(SCI_GETTARGETSTART);
         const sptr_t targetEnd = Sci(SCI_GETTARGETEND);
-        const unsigned int replaceMessage = (findOptions & kFindOptionRegex) ? SCI_REPLACETARGETRE : SCI_REPLACETARGET;
+        const unsigned int replaceMessage = regexReplacement ? SCI_REPLACETARGETRE : SCI_REPLACETARGET;
         const sptr_t replacementLength = Sci(replaceMessage,
             static_cast<uptr_t>(replacement.size()), reinterpret_cast<sptr_t>(replacement.c_str()));
         ++replacements;
@@ -280,7 +422,7 @@ int ReplaceAllMatches(const wchar_t* findText, const wchar_t* replaceText, DWORD
 
 int CountMatches(const wchar_t* findText, DWORD findOptions)
 {
-    const std::string needle = WideToUtf8(findText ? findText : L"");
+    const std::string needle = PrepareFindText(findText, findOptions);
     if (needle.empty())
         return 0;
 
@@ -299,6 +441,23 @@ int CountMatches(const wchar_t* findText, DWORD findOptions)
         const sptr_t targetEnd = Sci(SCI_GETTARGETEND);
         start = targetEnd > targetStart ? targetEnd : PositionAfter(targetStart);
     }
+
+    return count;
+}
+
+int MarkMatches(const wchar_t* findText, DWORD findOptions)
+{
+    const std::string needle = PrepareFindText(findText, findOptions);
+    const int count = FillSearchMarks(needle, findOptions);
+    if (count > 0)
+    {
+        StoreActiveTabSearchMarkState(findText, findOptions);
+        return count;
+    }
+
+    ClearActiveTabSearchMarkState();
+    if (!needle.empty())
+        MessageBeep(MB_ICONINFORMATION);
 
     return count;
 }
@@ -341,6 +500,12 @@ int FindWindowCount(void*, const OpenEditFindRequest& request)
 {
     RememberFindRequest(request, true);
     return CountMatches(g_findText, g_lastFindOptions);
+}
+
+int FindWindowMark(void*, const OpenEditFindRequest& request)
+{
+    RememberFindRequest(request, true);
+    return MarkMatches(g_findText, g_lastFindOptions);
 }
 
 bool FindWindowReplace(void*, const OpenEditFindRequest& request)
@@ -388,6 +553,7 @@ void OpenFindReplaceDialog(bool replaceDialog)
     OpenEditFindWindow::Callbacks callbacks{};
     callbacks.find = FindWindowFind;
     callbacks.count = FindWindowCount;
+    callbacks.mark = FindWindowMark;
     callbacks.replace = FindWindowReplace;
     callbacks.replaceAll = FindWindowReplaceAll;
 

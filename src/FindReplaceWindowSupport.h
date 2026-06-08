@@ -20,6 +20,7 @@ inline constexpr int IDC_REPLACE_TEXT = 2103;
 inline constexpr int IDC_FIND_NEXT = 2104;
 inline constexpr int IDC_FIND_PREVIOUS = 2105;
 inline constexpr int IDC_COUNT = 2106;
+inline constexpr int IDC_MARK = 2125;
 inline constexpr int IDC_REPLACE = 2107;
 inline constexpr int IDC_REPLACE_ALL = 2108;
 inline constexpr int IDC_REVERSE = 2109;

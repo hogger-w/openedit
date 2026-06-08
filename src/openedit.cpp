@@ -933,6 +933,15 @@ void ConfigureWordHighlightIndicator()
     Sci(SCI_INDICSETUNDER, kWordHighlightIndicator, TRUE);
 }
 
+void ConfigureSearchMarkIndicator()
+{
+    Sci(SCI_INDICSETSTYLE, kSearchMarkIndicator, INDIC_FULLBOX);
+    Sci(SCI_INDICSETFORE, kSearchMarkIndicator, RGB(255, 242, 153));
+    Sci(SCI_INDICSETALPHA, kSearchMarkIndicator, IsDarkTheme() ? 90 : 70);
+    Sci(SCI_INDICSETOUTLINEALPHA, kSearchMarkIndicator, IsDarkTheme() ? 110 : 90);
+    Sci(SCI_INDICSETUNDER, kSearchMarkIndicator, TRUE);
+}
+
 void SetMenuItemChecked(HMENU hMenu, UINT commandId, bool checked)
 {
     if (!hMenu)
@@ -1491,6 +1500,7 @@ void ApplyBaseEditorStyles()
     Sci(SCI_SETEDGECOLOUR, ThemeInvisible(), 0);
     ApplyEditorViewOptions();
     ConfigureWordHighlightIndicator();
+    ConfigureSearchMarkIndicator();
 }
 
 void ApplyCppLikeStyles()
@@ -2659,9 +2669,11 @@ void LoadTabIntoEditor(int tabIndex)
     {
         ScopedRedrawPause redrawPause(g_hSci);
         ClearWordHighlights();
+        ClearSearchMarks();
         Sci(SCI_SETEOLMODE, tab.eolMode, 0);
         SetEditorText(tab.text);
         ApplyLanguage(tab.languageCommand);
+        RestoreSearchMarksForActiveTab();
         Sci(SCI_EMPTYUNDOBUFFER);
         Sci(SCI_SETSAVEPOINT);
         const sptr_t anchorPosition = ClampEditorPosition(tab.anchorPosition);

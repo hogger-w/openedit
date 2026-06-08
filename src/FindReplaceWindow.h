@@ -22,6 +22,7 @@ public:
         void* context = nullptr;
         bool (*find)(void* context, const OpenEditFindRequest& request, bool previous) = nullptr;
         int (*count)(void* context, const OpenEditFindRequest& request) = nullptr;
+        int (*mark)(void* context, const OpenEditFindRequest& request) = nullptr;
         bool (*replace)(void* context, const OpenEditFindRequest& request) = nullptr;
         int (*replaceAll)(void* context, const OpenEditFindRequest& request) = nullptr;
     };
@@ -67,6 +68,7 @@ private:
     void FocusFindText();
     void ExecuteFind(bool previous);
     void ExecuteCount();
+    void ExecuteMark();
     void ExecuteReplace();
     void ExecuteReplaceAll();
 

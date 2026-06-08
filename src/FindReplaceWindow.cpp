@@ -183,6 +183,7 @@ void OpenEditFindWindow::CreateControls()
     CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_FIND_NEXT);
     CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_FIND_PREVIOUS);
     CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_COUNT);
+    CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_MARK);
     CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_REPLACE);
     CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_REPLACE_ALL);
 
@@ -234,9 +235,10 @@ void OpenEditFindWindow::LayoutControls()
     const int margin = 18;
     const int gap = 8;
     const int rowHeight = 28;
-    const int inputWidth = 372;
+    const int inputWidth = 342;
     const int smallButtonWidth = 66;
     const int countWidth = 58;
+    const int markWidth = 58;
     const int replaceAllWidth = 92;
     const int findY = 18;
     const int replaceY = 58;
@@ -246,6 +248,7 @@ void OpenEditFindWindow::LayoutControls()
     const int firstButtonX = margin + inputWidth + gap;
     const int secondButtonX = firstButtonX + smallButtonWidth + gap;
     const int thirdButtonX = secondButtonX + smallButtonWidth + gap;
+    const int fourthButtonX = thirdButtonX + countWidth + gap;
 
     findEditFrame_ = RECT{ margin, findY, margin + inputWidth, findY + rowHeight };
     replaceEditFrame_ = RECT{ margin, replaceY, margin + inputWidth, replaceY + rowHeight };
@@ -256,6 +259,7 @@ void OpenEditFindWindow::LayoutControls()
     MoveWindow(GetDlgItem(window_, IDC_FIND_NEXT), firstButtonX, findY, smallButtonWidth, rowHeight, TRUE);
     MoveWindow(GetDlgItem(window_, IDC_FIND_PREVIOUS), secondButtonX, findY, smallButtonWidth, rowHeight, TRUE);
     MoveWindow(GetDlgItem(window_, IDC_COUNT), thirdButtonX, findY, countWidth, rowHeight, TRUE);
+    MoveWindow(GetDlgItem(window_, IDC_MARK), fourthButtonX, findY, markWidth, rowHeight, TRUE);
 
     MoveWindow(GetDlgItem(window_, IDC_REPLACE_TEXT),
         replaceEditFrame_.left + kEditInsetX, replaceEditFrame_.top + kEditInsetY,
@@ -340,6 +344,7 @@ void OpenEditFindWindow::UpdateTexts()
     SetWindowTextW(GetDlgItem(window_, IDC_FIND_NEXT), Text(chineseLanguage_, L"\u4E0B\u4E00\u4E2A", L"Next"));
     SetWindowTextW(GetDlgItem(window_, IDC_FIND_PREVIOUS), Text(chineseLanguage_, L"\u4E0A\u4E00\u4E2A", L"Prev"));
     SetWindowTextW(GetDlgItem(window_, IDC_COUNT), Text(chineseLanguage_, L"\u8BA1\u6570", L"Count"));
+    SetWindowTextW(GetDlgItem(window_, IDC_MARK), Text(chineseLanguage_, L"\u6807\u8BB0", L"Mark"));
     SetWindowTextW(GetDlgItem(window_, IDC_REPLACE), Text(chineseLanguage_, L"\u66FF\u6362", L"Replace"));
     SetWindowTextW(GetDlgItem(window_, IDC_REPLACE_ALL), Text(chineseLanguage_, L"\u5168\u90E8\u66FF\u6362", L"All"));
     SetWindowTextW(GetDlgItem(window_, IDC_REVERSE), Text(chineseLanguage_, L"\u53CD\u5411", L"Reverse"));
@@ -535,6 +540,14 @@ void OpenEditFindWindow::ExecuteCount()
     FocusFindText();
 }
 
+void OpenEditFindWindow::ExecuteMark()
+{
+    const OpenEditFindRequest request = BuildRequest();
+    const int count = callbacks_.mark ? callbacks_.mark(callbacks_.context, request) : 0;
+    SetStatus(std::wstring(chineseLanguage_ ? L"\u5DF2\u6807\u8BB0: " : L"Marked: ") + std::to_wstring(count));
+    FocusFindText();
+}
+
 void OpenEditFindWindow::ExecuteReplace()
 {
     const OpenEditFindRequest request = BuildRequest();
@@ -591,6 +604,8 @@ LRESULT OpenEditFindWindow::HandleMessage(HWND window, UINT message, WPARAM wPar
             ExecuteFind(true);
         else if (clicked && commandId == IDC_COUNT)
             ExecuteCount();
+        else if (clicked && commandId == IDC_MARK)
+            ExecuteMark();
         else if (clicked && commandId == IDC_REPLACE)
             ExecuteReplace();
         else if (clicked && commandId == IDC_REPLACE_ALL)
