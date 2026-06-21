@@ -32,6 +32,7 @@ bool IsPanelControl(int controlId)
     case IDC_REVERSE:
     case IDC_MATCH_CASE:
     case IDC_WRAP:
+    case IDC_FULL_DOCUMENT:
     case IDC_MODE_LABEL:
     case IDC_MODE_NORMAL:
     case IDC_MODE_REGEX:
@@ -53,6 +54,7 @@ bool IsCheckBoxControl(int controlId)
     case IDC_REVERSE:
     case IDC_MATCH_CASE:
     case IDC_WRAP:
+    case IDC_FULL_DOCUMENT:
     case IDC_OPACITY_ENABLED:
         return true;
     default:

@@ -62,6 +62,7 @@ void OpenEditFindWindow::Hide()
     if (!window_)
         return;
 
+    const bool wasVisible = IsWindowVisible(window_) != FALSE;
     SaveWindowPosition();
     if (owner_ && IsWindow(owner_))
         SetActiveWindow(owner_);
@@ -74,6 +75,9 @@ void OpenEditFindWindow::Hide()
     {
         SetActiveWindow(owner_);
     }
+
+    if (wasVisible && callbacks_.closed)
+        callbacks_.closed(callbacks_.context);
 }
 
 void OpenEditFindWindow::Destroy()
@@ -190,6 +194,7 @@ void OpenEditFindWindow::CreateControls()
     CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_REVERSE);
     CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_MATCH_CASE);
     CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_WRAP);
+    CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, 0, IDC_FULL_DOCUMENT);
 
     CreateControl(L"STATIC", L"", SS_LEFTNOWORDWRAP, 0, IDC_MODE_LABEL);
     CreateControl(L"BUTTON", L"", BS_OWNERDRAW | WS_GROUP | WS_TABSTOP, 0, IDC_MODE_NORMAL);
@@ -270,9 +275,10 @@ void OpenEditFindWindow::LayoutControls()
     const int col1X = margin + 12;
     const int col2X = 226;
     const int col3X = 426;
-    MoveWindow(GetDlgItem(window_, IDC_REVERSE), col1X, panelY + 14, 120, 22, TRUE);
-    MoveWindow(GetDlgItem(window_, IDC_MATCH_CASE), col1X, panelY + 40, 136, 22, TRUE);
-    MoveWindow(GetDlgItem(window_, IDC_WRAP), col1X, panelY + 66, 120, 22, TRUE);
+    MoveWindow(GetDlgItem(window_, IDC_REVERSE), col1X, panelY + 10, 120, 22, TRUE);
+    MoveWindow(GetDlgItem(window_, IDC_MATCH_CASE), col1X, panelY + 34, 136, 22, TRUE);
+    MoveWindow(GetDlgItem(window_, IDC_WRAP), col1X, panelY + 58, 120, 22, TRUE);
+    MoveWindow(GetDlgItem(window_, IDC_FULL_DOCUMENT), col1X, panelY + 82, 136, 22, TRUE);
 
     MoveWindow(GetDlgItem(window_, IDC_MODE_LABEL), col2X, panelY + 10, 150, 18, TRUE);
     MoveWindow(GetDlgItem(window_, IDC_MODE_NORMAL), col2X, panelY + 36, 130, 22, TRUE);
@@ -350,6 +356,7 @@ void OpenEditFindWindow::UpdateTexts()
     SetWindowTextW(GetDlgItem(window_, IDC_REVERSE), Text(chineseLanguage_, L"\u53CD\u5411", L"Reverse"));
     SetWindowTextW(GetDlgItem(window_, IDC_MATCH_CASE), Text(chineseLanguage_, L"\u5339\u914D\u5927\u5C0F\u5199", L"Match case"));
     SetWindowTextW(GetDlgItem(window_, IDC_WRAP), Text(chineseLanguage_, L"\u5FAA\u73AF\u67E5\u627E", L"Wrap search"));
+    SetWindowTextW(GetDlgItem(window_, IDC_FULL_DOCUMENT), Text(chineseLanguage_, L"\u5168\u6587\u5339\u914D", L"Full document"));
     SetWindowTextW(GetDlgItem(window_, IDC_MODE_LABEL), Text(chineseLanguage_, L"\u67E5\u627E\u6A21\u5F0F", L"Find mode"));
     SetWindowTextW(GetDlgItem(window_, IDC_MODE_NORMAL), Text(chineseLanguage_, L"\u666E\u901A", L"Normal"));
     SetWindowTextW(GetDlgItem(window_, IDC_MODE_REGEX), Text(chineseLanguage_, L"\u6B63\u5219\u8868\u8FBE\u5F0F", L"Regex"));
@@ -401,6 +408,8 @@ bool OpenEditFindWindow::IsOptionChecked(int id) const
         return matchCase_;
     case IDC_WRAP:
         return wrap_;
+    case IDC_FULL_DOCUMENT:
+        return fullDocument_;
     case IDC_MODE_NORMAL:
         return !regex_;
     case IDC_MODE_REGEX:
@@ -428,6 +437,9 @@ void OpenEditFindWindow::SetOptionChecked(int id, bool checked)
         break;
     case IDC_WRAP:
         wrap_ = checked;
+        break;
+    case IDC_FULL_DOCUMENT:
+        fullDocument_ = checked;
         break;
     case IDC_MODE_NORMAL:
         regex_ = !checked;
@@ -513,6 +525,7 @@ OpenEditFindRequest OpenEditFindWindow::BuildRequest() const
     request.matchCase = matchCase_;
     request.wrap = wrap_;
     request.regex = regex_;
+    request.fullDocument = fullDocument_;
     return request;
 }
 
@@ -610,7 +623,8 @@ LRESULT OpenEditFindWindow::HandleMessage(HWND window, UINT message, WPARAM wPar
             ExecuteReplace();
         else if (clicked && commandId == IDC_REPLACE_ALL)
             ExecuteReplaceAll();
-        else if (clicked && (commandId == IDC_REVERSE || commandId == IDC_MATCH_CASE || commandId == IDC_WRAP))
+        else if (clicked && (commandId == IDC_REVERSE || commandId == IDC_MATCH_CASE ||
+            commandId == IDC_WRAP || commandId == IDC_FULL_DOCUMENT))
             ToggleCheckBox(commandId);
         else if (clicked && (commandId == IDC_MODE_NORMAL || commandId == IDC_MODE_REGEX))
             SelectRadio(IDC_MODE_NORMAL, IDC_MODE_REGEX, commandId);

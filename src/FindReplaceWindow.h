@@ -12,6 +12,7 @@ struct OpenEditFindRequest
     bool reverse = false;
     bool regex = false;
     bool wrap = true;
+    bool fullDocument = false;
 };
 
 class OpenEditFindWindow
@@ -25,6 +26,7 @@ public:
         int (*mark)(void* context, const OpenEditFindRequest& request) = nullptr;
         bool (*replace)(void* context, const OpenEditFindRequest& request) = nullptr;
         int (*replaceAll)(void* context, const OpenEditFindRequest& request) = nullptr;
+        void (*closed)(void* context) = nullptr;
     };
 
     explicit OpenEditFindWindow(HINSTANCE instance);
@@ -89,6 +91,7 @@ private:
     bool matchCase_ = false;
     bool wrap_ = true;
     bool regex_ = false;
+    bool fullDocument_ = false;
     bool opacityEnabled_ = false;
     bool opacityAlways_ = false;
     POINT lastPosition_{};

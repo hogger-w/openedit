@@ -2687,6 +2687,7 @@ void LoadTabIntoEditor(int tabIndex)
 
     g_loadingTabContent = false;
 
+    EnsureActiveTabVisible();
     UpdateWindowTitle();
     InvalidateTabBar();
     RefreshOpenFilesTree();

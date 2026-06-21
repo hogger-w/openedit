@@ -337,6 +337,19 @@ LRESULT CALLBACK EditorWndProc(HWND editorWindow, UINT message, WPARAM wParam, L
     case WM_DROPFILES:
         HandleDroppedFiles(reinterpret_cast<HDROP>(wParam));
         return 0;
+
+    case WM_MOUSEWHEEL:
+        if (g_hTabBar && IsWindow(g_hTabBar))
+        {
+            POINT screenPoint{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            RECT tabRect{};
+            if (GetWindowRect(g_hTabBar, &tabRect) && PtInRect(&tabRect, screenPoint))
+            {
+                SendMessageW(g_hTabBar, message, wParam, lParam);
+                return 0;
+            }
+        }
+        break;
     }
 
     return g_originalEditorProc ?

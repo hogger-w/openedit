@@ -36,8 +36,8 @@ IDI_SMALL          ICON         "assets\\oe.ico"
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,10,0
- PRODUCTVERSION 1,0,10,0
+ FILEVERSION 1,0,11,0
+ PRODUCTVERSION 1,0,11,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -54,11 +54,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "openedit\0"
             VALUE "FileDescription", "openedit\0"
-            VALUE "FileVersion", "1.0.10\0"
+            VALUE "FileVersion", "1.0.11\0"
             VALUE "InternalName", "openedit\0"
             VALUE "OriginalFilename", "openedit.exe\0"
             VALUE "ProductName", "openedit\0"
-            VALUE "ProductVersion", "1.0.10\0"
+            VALUE "ProductVersion", "1.0.11\0"
         END
     END
     BLOCK "VarFileInfo"
@@ -190,7 +190,7 @@ CAPTION "关于 openedit"
 FONT 9, "MS Shell Dlg"
 BEGIN
     ICON            IDI_OPENEDIT,IDC_STATIC,14,14,21,20
-    LTEXT           "openedit, 版本 1.0.10",IDC_STATIC,42,14,114,8,SS_NOPREFIX
+    LTEXT           "openedit, 版本 1.0.11",IDC_STATIC,42,14,114,8,SS_NOPREFIX
     LTEXT           "版权所有(c) 2025",IDC_STATIC,42,26,114,8
     DEFPUSHBUTTON   "确定",IDOK,113,41,50,14,WS_GROUP
 END

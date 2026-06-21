@@ -27,6 +27,7 @@ inline constexpr int IDC_REVERSE = 2109;
 inline constexpr int IDC_MATCH_CASE = 2110;
 inline constexpr int IDC_STATUS = 2112;
 inline constexpr int IDC_WRAP = 2116;
+inline constexpr int IDC_FULL_DOCUMENT = 2126;
 inline constexpr int IDC_MODE_LABEL = 2117;
 inline constexpr int IDC_MODE_NORMAL = 2118;
 inline constexpr int IDC_MODE_REGEX = 2119;

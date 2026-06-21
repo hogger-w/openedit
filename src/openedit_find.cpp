@@ -1,5 +1,43 @@
 ﻿#include "openedit_internal.h"
 
+#include <regex>
+
+namespace
+{
+struct FindWindowEditorState
+{
+    bool active = false;
+    bool caretLineVisibleAlways = false;
+};
+
+FindWindowEditorState g_findWindowEditorState;
+
+void BeginFindWindowEditorState()
+{
+    if (!g_hSci || g_findWindowEditorState.active)
+        return;
+
+    g_findWindowEditorState.active = true;
+    g_findWindowEditorState.caretLineVisibleAlways = Sci(SCI_GETCARETLINEVISIBLEALWAYS) != 0;
+    Sci(SCI_SETCARETLINEVISIBLEALWAYS, TRUE, 0);
+}
+
+void EndFindWindowEditorState()
+{
+    if (!g_findWindowEditorState.active)
+        return;
+
+    const FindWindowEditorState state = g_findWindowEditorState;
+    g_findWindowEditorState = {};
+
+    if (!g_hSci)
+        return;
+
+    Sci(SCI_SETCARETLINEVISIBLEALWAYS, state.caretLineVisibleAlways ? TRUE : FALSE, 0);
+    SetFocus(g_hSci);
+}
+}
+
 int GetScintillaSearchFlags(DWORD findOptions)
 {
     int flags = SCFIND_NONE;
@@ -95,6 +133,265 @@ std::string GetEditorRangeText(sptr_t start, sptr_t end)
     return text;
 }
 
+bool UseFullDocumentRegex(DWORD findOptions)
+{
+    return (findOptions & kFindOptionRegex) && (findOptions & kFindOptionFullDocument);
+}
+
+size_t ClampRegexOffset(sptr_t position, size_t length)
+{
+    if (position <= 0)
+        return 0;
+
+    const size_t offset = static_cast<size_t>(position);
+    return (std::min)(offset, length);
+}
+
+bool BuildFullDocumentRegex(const std::string& pattern, DWORD findOptions, std::regex& regex)
+{
+    try
+    {
+        std::regex_constants::syntax_option_type flags = std::regex_constants::ECMAScript;
+        if (!(findOptions & FR_MATCHCASE))
+            flags |= std::regex_constants::icase;
+        regex = std::regex(pattern, flags);
+        return true;
+    }
+    catch (const std::regex_error&)
+    {
+        MessageBeep(MB_ICONWARNING);
+        return false;
+    }
+}
+
+std::string PrepareFullDocumentRegexReplacement(const wchar_t* replaceText)
+{
+    return DecodeRegexLineEndingEscapes(WideToUtf8(replaceText ? replaceText : L""));
+}
+
+bool SelectEditorRange(sptr_t start, sptr_t end, bool focusEditor)
+{
+    if (start < 0 || end < start)
+        return false;
+
+    Sci(SCI_SETSEL, static_cast<uptr_t>(start), end);
+    Sci(SCI_SCROLLCARET);
+    if (focusEditor)
+        SetFocus(g_hSci);
+    return true;
+}
+
+bool FindFullDocumentRegexInRange(const std::string& text, const std::regex& regex,
+    size_t rangeStart, size_t rangeEnd, bool searchDown, sptr_t& matchStart, sptr_t& matchEnd)
+{
+    if (rangeStart > rangeEnd || rangeEnd > text.size())
+        return false;
+
+    using Iterator = std::string::const_iterator;
+    std::match_results<Iterator> match;
+    const Iterator begin = text.cbegin();
+    const Iterator last = begin + rangeEnd;
+
+    if (searchDown)
+    {
+        const Iterator first = begin + rangeStart;
+        if (!std::regex_search(first, last, match, regex))
+            return false;
+
+        matchStart = static_cast<sptr_t>(rangeStart + static_cast<size_t>(match.position(0)));
+        matchEnd = matchStart + static_cast<sptr_t>(match.length(0));
+        return true;
+    }
+
+    bool found = false;
+    size_t searchOffset = rangeStart;
+    while (searchOffset <= rangeEnd)
+    {
+        const Iterator first = begin + searchOffset;
+        if (!std::regex_search(first, last, match, regex))
+            break;
+
+        const size_t currentStart = searchOffset + static_cast<size_t>(match.position(0));
+        const size_t currentEnd = currentStart + static_cast<size_t>(match.length(0));
+        if (currentStart > rangeEnd || currentEnd > rangeEnd)
+            break;
+
+        matchStart = static_cast<sptr_t>(currentStart);
+        matchEnd = static_cast<sptr_t>(currentEnd);
+        found = true;
+
+        searchOffset = currentEnd > currentStart ? currentEnd : currentStart + 1;
+        if (searchOffset > rangeEnd)
+            break;
+    }
+
+    return found;
+}
+
+bool FindFullDocumentRegexTextInEditor(const std::string& pattern, DWORD findOptions,
+    bool searchDown, bool wrap, bool focusEditor)
+{
+    std::regex regex;
+    if (!BuildFullDocumentRegex(pattern, findOptions, regex))
+        return false;
+
+    const std::string text = GetEditorText();
+    const size_t selectionStart = ClampRegexOffset(Sci(SCI_GETSELECTIONSTART), text.size());
+    const size_t selectionEnd = ClampRegexOffset(Sci(SCI_GETSELECTIONEND), text.size());
+    const bool hasSelection = selectionStart != selectionEnd;
+    sptr_t matchStart = -1;
+    sptr_t matchEnd = -1;
+    bool found = false;
+
+    for (std::sregex_iterator it(text.begin(), text.end(), regex), end; it != end; ++it)
+    {
+        const size_t currentStart = static_cast<size_t>(it->position(0));
+        const size_t currentEnd = currentStart + static_cast<size_t>(it->length(0));
+        const bool usable = searchDown ?
+            (hasSelection ? currentStart >= selectionEnd : currentEnd > selectionEnd) :
+            (hasSelection ? currentEnd <= selectionStart : currentStart < selectionStart);
+        if (!usable)
+            continue;
+
+        matchStart = static_cast<sptr_t>(currentStart);
+        matchEnd = static_cast<sptr_t>(currentEnd);
+        found = true;
+        if (searchDown)
+            break;
+    }
+
+    if (!found && wrap)
+    {
+        for (std::sregex_iterator it(text.begin(), text.end(), regex), end; it != end; ++it)
+        {
+            const size_t currentStart = static_cast<size_t>(it->position(0));
+            const size_t currentEnd = currentStart + static_cast<size_t>(it->length(0));
+            const bool usable = searchDown ?
+                (hasSelection ? currentEnd <= selectionStart : currentEnd <= selectionEnd) :
+                (hasSelection ? currentStart >= selectionEnd : currentStart >= selectionStart);
+            if (!usable)
+                continue;
+
+            matchStart = static_cast<sptr_t>(currentStart);
+            matchEnd = static_cast<sptr_t>(currentEnd);
+            found = true;
+            if (searchDown)
+                break;
+        }
+    }
+
+    if (!found)
+    {
+        MessageBeep(MB_ICONINFORMATION);
+        return false;
+    }
+
+    return SelectEditorRange(matchStart, matchEnd, focusEditor);
+}
+
+int CountFullDocumentRegexMatches(const std::string& pattern, DWORD findOptions)
+{
+    std::regex regex;
+    if (!BuildFullDocumentRegex(pattern, findOptions, regex))
+        return 0;
+
+    const std::string text = GetEditorText();
+    int count = 0;
+    for (std::sregex_iterator it(text.begin(), text.end(), regex), end; it != end; ++it)
+        ++count;
+    return count;
+}
+
+int MarkFullDocumentRegexMatches(const std::string& pattern, DWORD findOptions)
+{
+    std::regex regex;
+    if (!BuildFullDocumentRegex(pattern, findOptions, regex))
+        return 0;
+
+    const std::string text = GetEditorText();
+    int count = 0;
+    Sci(SCI_SETINDICATORCURRENT, kSearchMarkIndicator, 0);
+    Sci(SCI_SETINDICATORVALUE, 1, 0);
+
+    for (std::sregex_iterator it(text.begin(), text.end(), regex), end; it != end; ++it)
+    {
+        const sptr_t matchStart = static_cast<sptr_t>(it->position(0));
+        const sptr_t matchLength = static_cast<sptr_t>(it->length(0));
+        ++count;
+        if (matchLength > 0)
+            Sci(SCI_INDICATORFILLRANGE, static_cast<uptr_t>(matchStart), matchLength);
+    }
+
+    return count;
+}
+
+bool ReplaceCurrentSelectionFullDocumentRegex(const std::string& pattern,
+    const wchar_t* replaceText, DWORD findOptions)
+{
+    const sptr_t selectionStart = Sci(SCI_GETSELECTIONSTART);
+    const sptr_t selectionEnd = Sci(SCI_GETSELECTIONEND);
+    if (selectionStart == selectionEnd)
+        return false;
+
+    std::regex regex;
+    if (!BuildFullDocumentRegex(pattern, findOptions, regex))
+        return false;
+
+    const std::string selectedText = GetEditorRangeText(
+        (std::min)(selectionStart, selectionEnd), (std::max)(selectionStart, selectionEnd));
+    std::smatch match;
+    if (!std::regex_search(selectedText, match, regex) ||
+        match.position(0) != 0 ||
+        static_cast<size_t>(match.length(0)) != selectedText.size())
+    {
+        return false;
+    }
+
+    const std::string replacement = PrepareFullDocumentRegexReplacement(replaceText);
+    const std::string replacedText = std::regex_replace(selectedText, regex, replacement,
+        std::regex_constants::format_first_only);
+    const sptr_t targetStart = (std::min)(selectionStart, selectionEnd);
+    const sptr_t targetEnd = (std::max)(selectionStart, selectionEnd);
+
+    Sci(SCI_SETTARGETRANGE, static_cast<uptr_t>(targetStart), targetEnd);
+    const sptr_t replacementLength = Sci(SCI_REPLACETARGET,
+        static_cast<uptr_t>(replacedText.size()), reinterpret_cast<sptr_t>(replacedText.c_str()));
+    if (replacementLength >= 0)
+        Sci(SCI_SETSEL, static_cast<uptr_t>(targetStart), targetStart + replacementLength);
+    SetActiveTabModified(true);
+    return true;
+}
+
+int ReplaceAllFullDocumentRegexMatches(const std::string& pattern,
+    const wchar_t* replaceText, DWORD findOptions)
+{
+    std::regex regex;
+    if (!BuildFullDocumentRegex(pattern, findOptions, regex))
+        return 0;
+
+    const std::string text = GetEditorText();
+    int count = 0;
+    for (std::sregex_iterator it(text.begin(), text.end(), regex), end; it != end; ++it)
+        ++count;
+
+    if (count == 0)
+    {
+        MessageBeep(MB_ICONINFORMATION);
+        return 0;
+    }
+
+    const std::string replacement = PrepareFullDocumentRegexReplacement(replaceText);
+    const std::string replacedText = std::regex_replace(text, regex, replacement);
+
+    Sci(SCI_BEGINUNDOACTION);
+    Sci(SCI_SETTARGETRANGE, 0, static_cast<sptr_t>(text.size()));
+    Sci(SCI_REPLACETARGET,
+        static_cast<uptr_t>(replacedText.size()), reinterpret_cast<sptr_t>(replacedText.c_str()));
+    Sci(SCI_ENDUNDOACTION);
+    SetActiveTabModified(true);
+    return count;
+}
+
 bool IsAsciiWordText(const std::string& text)
 {
     if (text.empty())
@@ -132,6 +429,9 @@ int FillSearchMarks(const std::string& needle, DWORD findOptions)
     ClearSearchMarks();
     if (needle.empty())
         return 0;
+
+    if (UseFullDocumentRegex(findOptions))
+        return MarkFullDocumentRegexMatches(needle, findOptions);
 
     int count = 0;
     sptr_t start = 0;
@@ -276,6 +576,9 @@ bool FindTextInEditor(const wchar_t* findText, DWORD findOptions, bool searchDow
     if (needle.empty())
         return false;
 
+    if (UseFullDocumentRegex(findOptions))
+        return FindFullDocumentRegexTextInEditor(needle, findOptions, searchDown, wrap, focusEditor);
+
     const sptr_t documentLength = Sci(SCI_GETTEXTLENGTH);
     const sptr_t selectionStart = Sci(SCI_GETSELECTIONSTART);
     const sptr_t selectionEnd = Sci(SCI_GETSELECTIONEND);
@@ -358,7 +661,13 @@ std::string PrepareReplacementText(const wchar_t* replaceText, bool regexReplace
 bool ReplaceCurrentSelection(const wchar_t* findText, const wchar_t* replaceText, DWORD findOptions)
 {
     const std::string needle = PrepareFindText(findText, findOptions);
-    if (needle.empty() || !SelectionMatchesSearch(needle, findOptions))
+    if (needle.empty())
+        return false;
+
+    if (UseFullDocumentRegex(findOptions))
+        return ReplaceCurrentSelectionFullDocumentRegex(needle, replaceText, findOptions);
+
+    if (!SelectionMatchesSearch(needle, findOptions))
         return false;
 
     const bool regexReplacement = UseScintillaRegexReplacement(needle, findOptions);
@@ -384,6 +693,9 @@ int ReplaceAllMatches(const wchar_t* findText, const wchar_t* replaceText, DWORD
     const std::string needle = PrepareFindText(findText, findOptions);
     if (needle.empty())
         return 0;
+
+    if (UseFullDocumentRegex(findOptions))
+        return ReplaceAllFullDocumentRegexMatches(needle, replaceText, findOptions);
 
     const bool regexReplacement = UseScintillaRegexReplacement(needle, findOptions);
     const std::string replacement = PrepareReplacementText(replaceText, regexReplacement);
@@ -425,6 +737,9 @@ int CountMatches(const wchar_t* findText, DWORD findOptions)
     const std::string needle = PrepareFindText(findText, findOptions);
     if (needle.empty())
         return 0;
+
+    if (UseFullDocumentRegex(findOptions))
+        return CountFullDocumentRegexMatches(needle, findOptions);
 
     int count = 0;
     sptr_t start = 0;
@@ -477,6 +792,8 @@ DWORD FindOptionsFromRequest(const OpenEditFindRequest& request, bool searchDown
         options |= FR_MATCHCASE;
     if (request.regex)
         options |= kFindOptionRegex;
+    if (request.fullDocument)
+        options |= kFindOptionFullDocument;
     if (searchDown)
         options |= FR_DOWN;
     return options;
@@ -512,7 +829,9 @@ bool FindWindowReplace(void*, const OpenEditFindRequest& request)
 {
     const bool searchDown = !request.reverse;
     RememberFindRequest(request, searchDown);
-    const bool replaced = ReplaceCurrentSelection(g_findText, g_replaceText, g_lastFindOptions);
+    bool replaced = ReplaceCurrentSelection(g_findText, g_replaceText, g_lastFindOptions);
+    if (!replaced && FindTextInEditor(g_findText, g_lastFindOptions, searchDown, request.wrap, false))
+        replaced = ReplaceCurrentSelection(g_findText, g_replaceText, g_lastFindOptions);
     if (replaced)
         FindTextInEditor(g_findText, g_lastFindOptions, searchDown, request.wrap, false);
     return replaced;
@@ -522,6 +841,11 @@ int FindWindowReplaceAll(void*, const OpenEditFindRequest& request)
 {
     RememberFindRequest(request, true);
     return ReplaceAllMatches(g_findText, g_replaceText, g_lastFindOptions);
+}
+
+void FindWindowClosed(void*)
+{
+    EndFindWindowEditorState();
 }
 
 std::wstring GetSelectedTextForFind()
@@ -556,9 +880,14 @@ void OpenFindReplaceDialog(bool replaceDialog)
     callbacks.mark = FindWindowMark;
     callbacks.replace = FindWindowReplace;
     callbacks.replaceAll = FindWindowReplaceAll;
+    callbacks.closed = FindWindowClosed;
 
-    g_findWindow->Show(hWnd, replaceDialog, g_findText, g_replaceText,
-        IsDarkTheme(), g_appLanguage == AppLanguage::Chinese, callbacks);
+    BeginFindWindowEditorState();
+    if (!g_findWindow->Show(hWnd, replaceDialog, g_findText, g_replaceText,
+        IsDarkTheme(), g_appLanguage == AppLanguage::Chinese, callbacks))
+    {
+        EndFindWindowEditorState();
+    }
 }
 
 void FindNextCommand(bool searchDown)
@@ -569,7 +898,8 @@ void FindNextCommand(bool searchDown)
         return;
     }
 
-    DWORD options = g_lastFindOptions & (FR_MATCHCASE | FR_WHOLEWORD | kFindOptionRegex);
+    DWORD options = g_lastFindOptions & (FR_MATCHCASE | FR_WHOLEWORD |
+        kFindOptionRegex | kFindOptionFullDocument);
     if (searchDown)
         options |= FR_DOWN;
     FindTextInEditor(g_findText, options, searchDown, true);

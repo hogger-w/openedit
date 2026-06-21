@@ -1,5 +1,245 @@
 ﻿#include "openedit_internal.h"
 
+namespace
+{
+inline constexpr UINT_PTR kTabTooltipHoverTimerId = 1;
+inline constexpr UINT_PTR kTabScrollAnimationTimerId = 2;
+inline constexpr UINT kTabTooltipHoverDelayMs = 500;
+inline constexpr UINT kTabScrollAnimationFrameMs = 16;
+inline constexpr DWORD kTabScrollAnimationDurationMs = 160;
+inline constexpr int kTabScrollButtonWidth = 24;
+inline constexpr int kTabScrollButtonCount = 2;
+inline constexpr int kTabWheelScrollPixels = 72;
+
+int g_pendingTabTooltipIndex = -1;
+POINT g_pendingTabTooltipPoint{};
+bool g_tabTooltipVisible = false;
+int g_visibleTabTooltipIndex = -1;
+int g_tabScrollOffset = 0;
+int g_hoveredTabScrollButton = 0;
+bool g_tabScrollAnimationActive = false;
+int g_tabScrollAnimationStartOffset = 0;
+int g_tabScrollAnimationTargetOffset = 0;
+DWORD g_tabScrollAnimationStartTick = 0;
+
+void CancelPendingTabTooltip(HWND tabBar)
+{
+    HWND timerWindow = tabBar ? tabBar : g_hTabBar;
+    if (timerWindow && IsWindow(timerWindow))
+        KillTimer(timerWindow, kTabTooltipHoverTimerId);
+
+    g_pendingTabTooltipIndex = -1;
+    g_pendingTabTooltipPoint = POINT{};
+}
+
+void StopTabScrollAnimation(HWND tabBar)
+{
+    HWND timerWindow = tabBar ? tabBar : g_hTabBar;
+    if (timerWindow && IsWindow(timerWindow))
+        KillTimer(timerWindow, kTabScrollAnimationTimerId);
+
+    g_tabScrollAnimationActive = false;
+}
+
+int TabScrollButtonAreaWidth()
+{
+    return kTabScrollButtonWidth * kTabScrollButtonCount;
+}
+
+int TabContentWidth()
+{
+    return static_cast<int>(g_tabs.size()) * kTabWidth;
+}
+
+bool HasTabOverflow(HWND tabBar)
+{
+    RECT clientRect{};
+    GetClientRect(tabBar, &clientRect);
+    return TabContentWidth() > (clientRect.right - clientRect.left);
+}
+
+RECT GetTabViewportRect(HWND tabBar)
+{
+    RECT rect{};
+    GetClientRect(tabBar, &rect);
+    if (HasTabOverflow(tabBar))
+        rect.right = (std::max)(rect.left, rect.right - TabScrollButtonAreaWidth());
+    return rect;
+}
+
+int MaxTabScrollOffset(HWND tabBar)
+{
+    const RECT viewportRect = GetTabViewportRect(tabBar);
+    const int viewportWidth = (std::max)(0, static_cast<int>(viewportRect.right - viewportRect.left));
+    return (std::max)(0, TabContentWidth() - viewportWidth);
+}
+
+void ClampTabScrollOffset(HWND tabBar)
+{
+    if (!HasTabOverflow(tabBar))
+    {
+        g_tabScrollOffset = 0;
+        return;
+    }
+
+    g_tabScrollOffset = (std::min)((std::max)(g_tabScrollOffset, 0), MaxTabScrollOffset(tabBar));
+}
+
+RECT GetTabScrollButtonRect(HWND tabBar, int direction)
+{
+    RECT clientRect{};
+    GetClientRect(tabBar, &clientRect);
+    RECT rect{
+        clientRect.right - TabScrollButtonAreaWidth(),
+        clientRect.top,
+        clientRect.right - kTabScrollButtonWidth,
+        clientRect.bottom
+    };
+    if (direction > 0)
+    {
+        rect.left += kTabScrollButtonWidth;
+        rect.right += kTabScrollButtonWidth;
+    }
+    return rect;
+}
+
+int HitTestTabScrollButton(HWND tabBar, POINT point)
+{
+    if (!HasTabOverflow(tabBar))
+        return 0;
+
+    const RECT leftRect = GetTabScrollButtonRect(tabBar, -1);
+    if (PtInRect(&leftRect, point))
+        return -1;
+
+    const RECT rightRect = GetTabScrollButtonRect(tabBar, 1);
+    if (PtInRect(&rightRect, point))
+        return 1;
+
+    return 0;
+}
+
+bool CanScrollTabs(HWND tabBar, int direction)
+{
+    ClampTabScrollOffset(tabBar);
+    return direction < 0 ? g_tabScrollOffset > 0 : g_tabScrollOffset < MaxTabScrollOffset(tabBar);
+}
+
+bool ScrollTabsBy(HWND tabBar, int delta)
+{
+    StopTabScrollAnimation(tabBar);
+
+    if (!HasTabOverflow(tabBar) || delta == 0)
+    {
+        ClampTabScrollOffset(tabBar);
+        return false;
+    }
+
+    const int oldOffset = g_tabScrollOffset;
+    g_tabScrollOffset += delta;
+    ClampTabScrollOffset(tabBar);
+    if (g_tabScrollOffset == oldOffset)
+        return false;
+
+    CancelPendingTabTooltip(tabBar);
+    g_tabTooltipVisible = false;
+    g_visibleTabTooltipIndex = -1;
+    if (g_hTabTooltip && IsWindow(g_hTabTooltip))
+    {
+        TOOLINFOW toolInfo{};
+        toolInfo.cbSize = sizeof(toolInfo);
+        toolInfo.hwnd = tabBar;
+        toolInfo.uId = 1;
+        SendMessageW(g_hTabTooltip, TTM_TRACKACTIVATE, FALSE, reinterpret_cast<LPARAM>(&toolInfo));
+    }
+    InvalidateRect(tabBar, nullptr, TRUE);
+    return true;
+}
+
+bool AnimateTabsBy(HWND tabBar, int delta)
+{
+    if (!HasTabOverflow(tabBar) || delta == 0)
+    {
+        ClampTabScrollOffset(tabBar);
+        return false;
+    }
+
+    ClampTabScrollOffset(tabBar);
+    const int oldOffset = g_tabScrollOffset;
+    const int targetOffset = (std::min)((std::max)(oldOffset + delta, 0), MaxTabScrollOffset(tabBar));
+    if (targetOffset == oldOffset)
+        return false;
+
+    CancelPendingTabTooltip(tabBar);
+    g_tabTooltipVisible = false;
+    g_visibleTabTooltipIndex = -1;
+    g_tabScrollAnimationActive = true;
+    g_tabScrollAnimationStartOffset = oldOffset;
+    g_tabScrollAnimationTargetOffset = targetOffset;
+    g_tabScrollAnimationStartTick = GetTickCount();
+    SetTimer(tabBar, kTabScrollAnimationTimerId, kTabScrollAnimationFrameMs, nullptr);
+    return true;
+}
+
+void UpdateTabScrollAnimation(HWND tabBar)
+{
+    if (!g_tabScrollAnimationActive)
+        return;
+
+    if (!HasTabOverflow(tabBar))
+    {
+        StopTabScrollAnimation(tabBar);
+        g_tabScrollOffset = 0;
+        InvalidateRect(tabBar, nullptr, TRUE);
+        return;
+    }
+
+    const DWORD elapsed = GetTickCount() - g_tabScrollAnimationStartTick;
+    if (elapsed >= kTabScrollAnimationDurationMs)
+    {
+        g_tabScrollOffset = g_tabScrollAnimationTargetOffset;
+        ClampTabScrollOffset(tabBar);
+        StopTabScrollAnimation(tabBar);
+        InvalidateRect(tabBar, nullptr, TRUE);
+        return;
+    }
+
+    const double t = static_cast<double>(elapsed) / static_cast<double>(kTabScrollAnimationDurationMs);
+    const double remaining = 1.0 - t;
+    const double eased = 1.0 - (remaining * remaining * remaining);
+    const int delta = g_tabScrollAnimationTargetOffset - g_tabScrollAnimationStartOffset;
+    g_tabScrollOffset = g_tabScrollAnimationStartOffset +
+        static_cast<int>((delta * eased) + (delta >= 0 ? 0.5 : -0.5));
+    ClampTabScrollOffset(tabBar);
+    InvalidateRect(tabBar, nullptr, TRUE);
+}
+}
+
+void EnsureActiveTabVisible()
+{
+    StopTabScrollAnimation(g_hTabBar);
+
+    if (!g_hTabBar || !IsWindow(g_hTabBar) || g_activeTabIndex < 0)
+        return;
+
+    if (!HasTabOverflow(g_hTabBar))
+    {
+        g_tabScrollOffset = 0;
+        return;
+    }
+
+    const RECT viewportRect = GetTabViewportRect(g_hTabBar);
+    const int viewportWidth = (std::max)(0, static_cast<int>(viewportRect.right - viewportRect.left));
+    const int tabLeft = g_activeTabIndex * kTabWidth;
+    const int tabRight = tabLeft + kTabWidth;
+    if (tabLeft < g_tabScrollOffset)
+        g_tabScrollOffset = tabLeft;
+    else if (tabRight > g_tabScrollOffset + viewportWidth)
+        g_tabScrollOffset = tabRight - viewportWidth;
+
+    ClampTabScrollOffset(g_hTabBar);
+}
+
 int GetTabBarTabWidth(HWND tabBar)
 {
     UNREFERENCED_PARAMETER(tabBar);
@@ -8,12 +248,12 @@ int GetTabBarTabWidth(HWND tabBar)
 
 RECT GetTabBarTabRect(HWND tabBar, int tabIndex)
 {
-    RECT clientRect{};
-    GetClientRect(tabBar, &clientRect);
+    ClampTabScrollOffset(tabBar);
 
+    const RECT viewportRect = GetTabViewportRect(tabBar);
     const int tabWidth = GetTabBarTabWidth(tabBar);
-    const int left = clientRect.left + (tabIndex * tabWidth);
-    return RECT{ left, clientRect.top, left + tabWidth, clientRect.bottom };
+    const int left = viewportRect.left + (tabIndex * tabWidth) - g_tabScrollOffset;
+    return RECT{ left, viewportRect.top, left + tabWidth, viewportRect.bottom };
 }
 
 RECT GetTabCloseButtonRect(const RECT& tabRect)
@@ -42,6 +282,11 @@ int HitTestTabBar(HWND tabBar, POINT point, bool* closeButton)
 {
     if (closeButton)
         *closeButton = false;
+
+    ClampTabScrollOffset(tabBar);
+    const RECT viewportRect = GetTabViewportRect(tabBar);
+    if (!PtInRect(&viewportRect, point))
+        return -1;
 
     const int count = static_cast<int>(g_tabs.size());
     for (int index = 0; index < count; ++index)
@@ -89,6 +334,10 @@ HWND EnsureTabTooltip(HWND tabBar)
 
 void HideTabTooltip()
 {
+    CancelPendingTabTooltip(g_hTabBar);
+    g_tabTooltipVisible = false;
+    g_visibleTabTooltipIndex = -1;
+
     if (!g_hTabTooltip || !IsWindow(g_hTabTooltip))
         return;
 
@@ -101,6 +350,8 @@ void HideTabTooltip()
 
 void UpdateTabTooltip(HWND tabBar, int tabIndex, POINT point)
 {
+    UNREFERENCED_PARAMETER(point);
+
     if (tabIndex < 0)
     {
         HideTabTooltip();
@@ -125,27 +376,81 @@ void UpdateTabTooltip(HWND tabBar, int tabIndex, POINT point)
     toolInfo.lpszText = const_cast<LPWSTR>(g_tabTooltipText.c_str());
     SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&toolInfo));
 
-    POINT screenPoint = point;
+    const RECT tabRect = GetTabBarTabRect(tabBar, tabIndex);
+    const RECT viewportRect = GetTabViewportRect(tabBar);
+    POINT screenPoint{ (std::max)(tabRect.left, viewportRect.left) + 12, tabRect.bottom + 4 };
     ClientToScreen(tabBar, &screenPoint);
-    SendMessageW(tooltip, TTM_TRACKPOSITION, 0, MAKELPARAM(screenPoint.x + 12, screenPoint.y + 20));
+    SendMessageW(tooltip, TTM_TRACKPOSITION, 0, MAKELPARAM(screenPoint.x, screenPoint.y));
     SendMessageW(tooltip, TTM_TRACKACTIVATE, TRUE, reinterpret_cast<LPARAM>(&toolInfo));
+    g_tabTooltipVisible = true;
+    g_visibleTabTooltipIndex = tabIndex;
+}
+
+void ScheduleTabTooltip(HWND tabBar, int tabIndex, POINT point)
+{
+    if (tabIndex < 0)
+    {
+        HideTabTooltip();
+        return;
+    }
+
+    if (g_tabTooltipVisible && tabIndex == g_visibleTabTooltipIndex)
+    {
+        return;
+    }
+
+    if (g_pendingTabTooltipIndex == tabIndex)
+    {
+        g_pendingTabTooltipPoint = point;
+        return;
+    }
+
+    HideTabTooltip();
+    g_pendingTabTooltipIndex = tabIndex;
+    g_pendingTabTooltipPoint = point;
+    SetTimer(tabBar, kTabTooltipHoverTimerId, kTabTooltipHoverDelayMs, nullptr);
+}
+
+void ShowPendingTabTooltip(HWND tabBar)
+{
+    const int pendingTabIndex = g_pendingTabTooltipIndex;
+    CancelPendingTabTooltip(tabBar);
+    if (pendingTabIndex < 0)
+        return;
+
+    POINT point{};
+    if (!GetCursorPos(&point))
+        point = g_pendingTabTooltipPoint;
+    else
+        ScreenToClient(tabBar, &point);
+
+    bool closeButton = false;
+    const int currentTabIndex = HitTestTabBar(tabBar, point, &closeButton);
+    if (currentTabIndex != pendingTabIndex || currentTabIndex != g_hoveredTabIndex)
+        return;
+
+    UpdateTabTooltip(tabBar, currentTabIndex, point);
 }
 
 void UpdateTabHoverState(HWND tabBar, POINT point)
 {
+    const int scrollButton = HitTestTabScrollButton(tabBar, point);
     bool closeButton = false;
-    const int tabIndex = HitTestTabBar(tabBar, point, &closeButton);
+    const int tabIndex = scrollButton == 0 ? HitTestTabBar(tabBar, point, &closeButton) : -1;
     const int closeIndex = closeButton ? tabIndex : -1;
-    const bool changed = tabIndex != g_hoveredTabIndex || closeIndex != g_hoveredTabCloseIndex;
+    const bool changed = tabIndex != g_hoveredTabIndex ||
+        closeIndex != g_hoveredTabCloseIndex ||
+        scrollButton != g_hoveredTabScrollButton;
 
     if (changed)
     {
         g_hoveredTabIndex = tabIndex;
         g_hoveredTabCloseIndex = closeIndex;
+        g_hoveredTabScrollButton = scrollButton;
         InvalidateRect(tabBar, nullptr, TRUE);
     }
 
-    UpdateTabTooltip(tabBar, tabIndex, point);
+    ScheduleTabTooltip(tabBar, tabIndex, point);
 
     if (!g_trackingTabMouse)
     {
@@ -240,10 +545,54 @@ void FillTopRoundedRect(HDC hdc, const RECT& rect, COLORREF color)
     DeleteObject(brush);
 }
 
+void DrawTabScrollButton(HWND tabBar, HDC hdc, int direction)
+{
+    const RECT buttonRect = GetTabScrollButtonRect(tabBar, direction);
+    const bool enabled = CanScrollTabs(tabBar, direction);
+    const bool hovered = enabled && g_hoveredTabScrollButton == direction;
+    const COLORREF back = hovered ? ThemeTabInactiveBack() : ThemeTabBarBack();
+    const COLORREF border = ThemeTabBorder();
+    const COLORREF icon = enabled ? ThemeTabText() : (IsDarkTheme() ? RGB(96, 96, 100) : RGB(166, 174, 184));
+
+    HBRUSH backBrush = CreateSolidBrush(back);
+    FillRect(hdc, &buttonRect, backBrush);
+    DeleteObject(backBrush);
+
+    HPEN borderPen = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldPen = SelectObject(hdc, borderPen);
+    MoveToEx(hdc, buttonRect.left, buttonRect.top + 4, nullptr);
+    LineTo(hdc, buttonRect.left, buttonRect.bottom - 4);
+    SelectObject(hdc, oldPen);
+    DeleteObject(borderPen);
+
+    HPEN iconPen = CreatePen(PS_SOLID, enabled ? 2 : 1, icon);
+    oldPen = SelectObject(hdc, iconPen);
+    const int centerX = (buttonRect.left + buttonRect.right) / 2;
+    const int centerY = (buttonRect.top + buttonRect.bottom) / 2;
+    const int half = 4;
+    if (direction < 0)
+    {
+        MoveToEx(hdc, centerX + 2, centerY - half, nullptr);
+        LineTo(hdc, centerX - 2, centerY);
+        LineTo(hdc, centerX + 2, centerY + half);
+    }
+    else
+    {
+        MoveToEx(hdc, centerX - 2, centerY - half, nullptr);
+        LineTo(hdc, centerX + 2, centerY);
+        LineTo(hdc, centerX - 2, centerY + half);
+    }
+    SelectObject(hdc, oldPen);
+    DeleteObject(iconPen);
+}
+
 void DrawTabBar(HWND tabBar, HDC hdc)
 {
     RECT clientRect{};
     GetClientRect(tabBar, &clientRect);
+    ClampTabScrollOffset(tabBar);
+    const bool overflow = HasTabOverflow(tabBar);
+    const RECT viewportRect = GetTabViewportRect(tabBar);
 
     HBRUSH barBrush = CreateSolidBrush(ThemeTabBarBack());
     FillRect(hdc, &clientRect, barBrush);
@@ -253,12 +602,17 @@ void DrawTabBar(HWND tabBar, HDC hdc)
     HGDIOBJ oldFont = SelectObject(hdc, font);
     SetBkMode(hdc, TRANSPARENT);
 
+    const int savedDc = SaveDC(hdc);
+    IntersectClipRect(hdc, viewportRect.left, viewportRect.top, viewportRect.right, viewportRect.bottom);
+
     const int count = static_cast<int>(g_tabs.size());
     for (int index = 0; index < count; ++index)
     {
         const bool active = index == g_activeTabIndex;
         RECT tabRect = GetTabBarTabRect(tabBar, index);
         tabRect.bottom -= 1;
+        if (tabRect.right <= viewportRect.left || tabRect.left >= viewportRect.right)
+            continue;
 
         FillTopRoundedRect(hdc, tabRect, active ? ThemeTabActiveBack() : ThemeTabInactiveBack());
 
@@ -280,6 +634,13 @@ void DrawTabBar(HWND tabBar, HDC hdc)
             DrawTextW(hdc, title.c_str(), -1, &textRect,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         }
+    }
+    RestoreDC(hdc, savedDc);
+
+    if (overflow)
+    {
+        DrawTabScrollButton(tabBar, hdc, -1);
+        DrawTabScrollButton(tabBar, hdc, 1);
     }
 
     HPEN bottomPen = CreatePen(PS_SOLID, 1, ThemeTabBorder());
@@ -313,7 +674,12 @@ LRESULT CALLBACK TabBarWndProc(HWND tabBar, UINT message, WPARAM wParam, LPARAM 
     }
 
     case WM_SIZE:
+        StopTabScrollAnimation(tabBar);
+        ClampTabScrollOffset(tabBar);
+        if (!HasTabOverflow(tabBar))
+            g_hoveredTabScrollButton = 0;
         InvalidateRect(tabBar, nullptr, TRUE);
+        HideTabTooltip();
         if (g_hTabTooltip && IsWindow(g_hTabTooltip))
         {
             TOOLINFOW toolInfo{};
@@ -325,6 +691,19 @@ LRESULT CALLBACK TabBarWndProc(HWND tabBar, UINT message, WPARAM wParam, LPARAM 
         }
         return 0;
 
+    case WM_TIMER:
+        if (wParam == kTabTooltipHoverTimerId)
+        {
+            ShowPendingTabTooltip(tabBar);
+            return 0;
+        }
+        if (wParam == kTabScrollAnimationTimerId)
+        {
+            UpdateTabScrollAnimation(tabBar);
+            return 0;
+        }
+        return DefWindowProc(tabBar, message, wParam, lParam);
+
     case WM_MOUSEMOVE:
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -334,18 +713,47 @@ LRESULT CALLBACK TabBarWndProc(HWND tabBar, UINT message, WPARAM wParam, LPARAM 
 
     case WM_MOUSELEAVE:
         g_trackingTabMouse = false;
-        if (g_hoveredTabIndex >= 0 || g_hoveredTabCloseIndex >= 0)
+        if (g_hoveredTabIndex >= 0 || g_hoveredTabCloseIndex >= 0 || g_hoveredTabScrollButton != 0)
         {
             g_hoveredTabIndex = -1;
             g_hoveredTabCloseIndex = -1;
+            g_hoveredTabScrollButton = 0;
             InvalidateRect(tabBar, nullptr, TRUE);
         }
         HideTabTooltip();
         return 0;
 
+    case WM_MOUSEWHEEL:
+    {
+        POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ScreenToClient(tabBar, &point);
+        RECT clientRect{};
+        GetClientRect(tabBar, &clientRect);
+        if (!PtInRect(&clientRect, point))
+            return DefWindowProc(tabBar, message, wParam, lParam);
+
+        const int wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+        if (wheelDelta != 0 && ScrollTabsBy(tabBar, wheelDelta > 0 ? -kTabWheelScrollPixels : kTabWheelScrollPixels))
+        {
+            UpdateTabHoverState(tabBar, point);
+            return 0;
+        }
+        return 0;
+    }
+
     case WM_LBUTTONDOWN:
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        HideTabTooltip();
+        const int scrollButton = HitTestTabScrollButton(tabBar, point);
+        if (scrollButton != 0)
+        {
+            if (CanScrollTabs(tabBar, scrollButton))
+                AnimateTabsBy(tabBar, scrollButton * kTabWidth);
+            UpdateTabHoverState(tabBar, point);
+            return 0;
+        }
+
         if (CloseTabAtPoint(tabBar, point))
             return 0;
 
@@ -360,6 +768,10 @@ LRESULT CALLBACK TabBarWndProc(HWND tabBar, UINT message, WPARAM wParam, LPARAM 
     case WM_LBUTTONDBLCLK:
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        HideTabTooltip();
+        if (HitTestTabScrollButton(tabBar, point) != 0)
+            return 0;
+
         if (CloseTabAtPoint(tabBar, point))
             return 0;
 
@@ -372,6 +784,10 @@ LRESULT CALLBACK TabBarWndProc(HWND tabBar, UINT message, WPARAM wParam, LPARAM 
     case WM_RBUTTONUP:
     {
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        HideTabTooltip();
+        if (HitTestTabScrollButton(tabBar, point) != 0)
+            return 0;
+
         const int tabIndex = HitTestTabBar(tabBar, point, nullptr);
         if (tabIndex < 0)
             return 0;
