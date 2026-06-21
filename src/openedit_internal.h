@@ -372,6 +372,7 @@ struct DocumentTab
     bool modified = false;
     bool untitled = true;
     bool openedFromFolder = false;
+    bool readOnly = false;
 };
 
 class ScopedRedrawPause
@@ -648,6 +649,8 @@ const wchar_t* EncodingDisplayName(DocumentEncoding encoding);
 const wchar_t* EolDisplayName(int eolMode);
 bool IsEditCommand(int commandId);
 void ExecuteEditCommand(int commandId);
+bool IsActiveDocumentReadOnly();
+void ShowReadOnlyWarning(HWND owner = nullptr);
 void DestroyPopupWindowWithoutFlash(HWND popupWindow);
 void RestoreMainWindowAfterPopupClose(bool focusEditor);
 void InvalidateTabBar();
@@ -717,6 +720,7 @@ std::string DecodeFileBytesToUtf8(const std::vector<char>& content, size_t byteC
 std::vector<char> EncodeUtf8ForFile(const std::string& utf8Text, DocumentEncoding encoding);
 int DetectEolModeFromText(const std::string& text);
 std::wstring GetTabDisplayTitle(const DocumentTab& tab);
+std::wstring GetTabBarDisplayTitle(const DocumentTab& tab);
 std::wstring GetTabTooltipText(int tabIndex);
 int FindOpenTabByPath(const std::wstring& path);
 const wchar_t* ColumnEditorTitle();

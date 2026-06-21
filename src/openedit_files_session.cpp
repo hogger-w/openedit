@@ -154,6 +154,17 @@ bool DirectoryExists(const std::wstring& path)
     return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+bool IsFileReadOnly(const std::wstring& path)
+{
+    if (path.empty())
+        return false;
+
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_READONLY) &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
 bool WriteDocumentTextToFile(const std::wstring& path, const std::string& utf8Text, DocumentEncoding encoding, bool showErrors)
 {
     const std::vector<char> encodedText = EncodeUtf8ForFile(utf8Text, encoding);
@@ -218,6 +229,17 @@ bool SaveCurrentFileAs()
     if (path.empty())
         return false;
 
+    if (IsFileReadOnly(path))
+    {
+        MessageBoxW(
+            hWnd,
+            UiText(L"\u76EE\u6807\u6587\u4EF6\u662F\u53EA\u8BFB\u7684\uFF0C\u65E0\u6CD5\u8986\u76D6\u3002\u8BF7\u9009\u62E9\u5176\u4ED6\u4FDD\u5B58\u4F4D\u7F6E\uFF0C\u6216\u5148\u53D6\u6D88\u8BE5\u6587\u4EF6\u7684\u53EA\u8BFB\u5C5E\u6027\u3002",
+                L"The target file is read-only and cannot be overwritten. Choose another save location or clear the file's read-only attribute first."),
+            L"openedit",
+            MB_OK | MB_ICONWARNING);
+        return false;
+    }
+
     if (!SaveFileFromEditor(path))
         return false;
 
@@ -234,6 +256,8 @@ bool SaveCurrentFileAs()
         tab.eolMode = static_cast<int>(Sci(SCI_GETEOLMODE));
         tab.modified = false;
         tab.untitled = false;
+        tab.readOnly = IsFileReadOnly(path);
+        Sci(SCI_SETREADONLY, tab.readOnly ? TRUE : FALSE, 0);
         InvalidateTabBar();
         RefreshOpenFilesTree();
         InvalidateStatusBar();
@@ -244,10 +268,37 @@ bool SaveCurrentFileAs()
     return true;
 }
 
+bool PromptSaveReadOnlyFileAs(const std::wstring& path)
+{
+    std::wstring message = UiText(
+        L"\u5F53\u524D\u6587\u4EF6\u662F\u53EA\u8BFB\u7684\uFF0C\u65E0\u6CD5\u76F4\u63A5\u4FDD\u5B58\u3002\u662F\u5426\u53E6\u5B58\u4E3A\u5176\u4ED6\u6587\u4EF6\uFF1F",
+        L"The current file is read-only and cannot be saved directly. Save it as another file?");
+    if (!path.empty())
+        message = FileNameFromPath(path) + L"\n\n" + message;
+
+    const int result = MessageBoxW(hWnd, message.c_str(), L"openedit", MB_YESNO | MB_ICONWARNING);
+    return result == IDYES ? SaveCurrentFileAs() : false;
+}
+
 bool SaveCurrentFile()
 {
     if (g_currentFilePath.empty())
         return SaveCurrentFileAs();
+
+    const bool fileReadOnly = IsFileReadOnly(g_currentFilePath);
+    if (IsActiveTabValid() && g_tabs[g_activeTabIndex].readOnly != fileReadOnly)
+    {
+        g_tabs[g_activeTabIndex].readOnly = fileReadOnly;
+        Sci(SCI_SETREADONLY, fileReadOnly ? TRUE : FALSE, 0);
+        InvalidateTabBar();
+        RefreshOpenFilesTree();
+        InvalidateStatusBar();
+    }
+
+    if (fileReadOnly)
+    {
+        return PromptSaveReadOnlyFileAs(g_currentFilePath);
+    }
 
     if (!SaveFileFromEditor(g_currentFilePath))
         return false;
@@ -263,6 +314,8 @@ bool SaveCurrentFile()
         tab.eolMode = static_cast<int>(Sci(SCI_GETEOLMODE));
         tab.modified = false;
         tab.untitled = false;
+        tab.readOnly = IsFileReadOnly(g_currentFilePath);
+        Sci(SCI_SETREADONLY, tab.readOnly ? TRUE : FALSE, 0);
         InvalidateTabBar();
         RefreshOpenFilesTree();
         InvalidateStatusBar();
@@ -376,6 +429,7 @@ bool LoadDocumentTabFromFile(const std::wstring& path, DocumentTab& tab, bool sh
     tab.eolMode = DetectEolModeFromText(tab.text);
     tab.modified = false;
     tab.untitled = false;
+    tab.readOnly = IsFileReadOnly(path);
     return true;
 }
 
@@ -384,6 +438,16 @@ bool LoadFileIntoEditor(const std::wstring& path, bool openedFromFolder)
     const int existingTab = FindOpenTabByPath(path);
     if (existingTab >= 0)
     {
+        const bool readOnly = IsFileReadOnly(path);
+        if (g_tabs[existingTab].readOnly != readOnly)
+        {
+            g_tabs[existingTab].readOnly = readOnly;
+            if (existingTab == g_activeTabIndex)
+                Sci(SCI_SETREADONLY, readOnly ? TRUE : FALSE, 0);
+            InvalidateTabBar();
+            RefreshOpenFilesTree();
+            InvalidateStatusBar();
+        }
         if (!openedFromFolder && g_tabs[existingTab].openedFromFolder)
         {
             g_tabs[existingTab].openedFromFolder = false;

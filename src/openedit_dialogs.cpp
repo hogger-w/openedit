@@ -81,6 +81,12 @@ void SetActiveDocumentEolMode(int eolMode)
     const int oldEolMode = static_cast<int>(Sci(SCI_GETEOLMODE));
     if (oldEolMode != eolMode)
     {
+        if (IsActiveDocumentReadOnly())
+        {
+            ShowReadOnlyWarning(hWnd);
+            return;
+        }
+
         Sci(SCI_CONVERTEOLS, eolMode, 0);
         Sci(SCI_SETEOLMODE, eolMode, 0);
     }
@@ -733,7 +739,7 @@ void InitializeAboutControls(HWND aboutWindow)
 
     CreateSettingsControl(aboutWindow, L"STATIC", L"openedit",
         SS_LEFTNOWORDWRAP, 78, 30, 220, 24, IDC_STATIC);
-    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.11", L"Version 1.0.11"),
+    CreateSettingsControl(aboutWindow, L"STATIC", UiText(L"\u7248\u672C 1.0.12", L"Version 1.0.12"),
         SS_LEFTNOWORDWRAP, 78, 58, 220, 20, IDC_STATIC);
     SYSTEMTIME localTime{};
     GetLocalTime(&localTime);

@@ -406,8 +406,7 @@ bool ApplyColumnEditRequest(HWND owner, const ColumnEditRequest& request)
 {
     if (Sci(SCI_GETREADONLY))
     {
-        ShowColumnEditorMessage(owner, L"\u5F53\u524D\u6587\u6863\u662F\u53EA\u8BFB\u7684\uFF0C\u65E0\u6CD5\u6267\u884C\u5217\u7F16\u8F91\u3002",
-            L"The current document is read-only, so column editing cannot be applied.");
+        ShowReadOnlyWarning(owner);
         return false;
     }
 

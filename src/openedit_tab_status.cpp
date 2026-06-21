@@ -630,7 +630,7 @@ void DrawTabBar(HWND tabBar, HDC hdc)
         if (textRect.right > textRect.left)
         {
             SetTextColor(hdc, ThemeTabText());
-            const std::wstring title = GetTabDisplayTitle(g_tabs[index]);
+            const std::wstring title = GetTabBarDisplayTitle(g_tabs[index]);
             DrawTextW(hdc, title.c_str(), -1, &textRect,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         }

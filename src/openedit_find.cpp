@@ -328,6 +328,12 @@ int MarkFullDocumentRegexMatches(const std::string& pattern, DWORD findOptions)
 bool ReplaceCurrentSelectionFullDocumentRegex(const std::string& pattern,
     const wchar_t* replaceText, DWORD findOptions)
 {
+    if (IsActiveDocumentReadOnly())
+    {
+        ShowReadOnlyWarning(hWnd);
+        return false;
+    }
+
     const sptr_t selectionStart = Sci(SCI_GETSELECTIONSTART);
     const sptr_t selectionEnd = Sci(SCI_GETSELECTIONEND);
     if (selectionStart == selectionEnd)
@@ -365,6 +371,12 @@ bool ReplaceCurrentSelectionFullDocumentRegex(const std::string& pattern,
 int ReplaceAllFullDocumentRegexMatches(const std::string& pattern,
     const wchar_t* replaceText, DWORD findOptions)
 {
+    if (IsActiveDocumentReadOnly())
+    {
+        ShowReadOnlyWarning(hWnd);
+        return 0;
+    }
+
     std::regex regex;
     if (!BuildFullDocumentRegex(pattern, findOptions, regex))
         return 0;
@@ -664,6 +676,12 @@ bool ReplaceCurrentSelection(const wchar_t* findText, const wchar_t* replaceText
     if (needle.empty())
         return false;
 
+    if (IsActiveDocumentReadOnly())
+    {
+        ShowReadOnlyWarning(hWnd);
+        return false;
+    }
+
     if (UseFullDocumentRegex(findOptions))
         return ReplaceCurrentSelectionFullDocumentRegex(needle, replaceText, findOptions);
 
@@ -693,6 +711,12 @@ int ReplaceAllMatches(const wchar_t* findText, const wchar_t* replaceText, DWORD
     const std::string needle = PrepareFindText(findText, findOptions);
     if (needle.empty())
         return 0;
+
+    if (IsActiveDocumentReadOnly())
+    {
+        ShowReadOnlyWarning(hWnd);
+        return 0;
+    }
 
     if (UseFullDocumentRegex(findOptions))
         return ReplaceAllFullDocumentRegexMatches(needle, replaceText, findOptions);

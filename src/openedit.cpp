@@ -2373,8 +2373,46 @@ bool IsEditCommand(int commandId)
         commandId == IDM_EDIT_COLUMN_EDITOR;
 }
 
+bool IsModifyingEditCommand(int commandId)
+{
+    switch (commandId)
+    {
+    case IDM_EDIT_UNDO:
+    case IDM_EDIT_REDO:
+    case IDM_EDIT_CUT:
+    case IDM_EDIT_PASTE:
+    case IDM_EDIT_DELETE:
+    case IDM_EDIT_COLUMN_EDITOR:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsActiveDocumentReadOnly()
+{
+    return g_hSci && Sci(SCI_GETREADONLY) != 0;
+}
+
+void ShowReadOnlyWarning(HWND owner)
+{
+    MessageBoxW(
+        owner ? owner : hWnd,
+        UiText(L"\u5F53\u524D\u6587\u4EF6\u662F\u53EA\u8BFB\u7684\uFF0C\u65E0\u6CD5\u4FEE\u6539\u3002",
+            L"The current file is read-only and cannot be modified."),
+        L"openedit",
+        MB_OK | MB_ICONWARNING);
+}
+
 void ExecuteEditCommand(int commandId)
 {
+    if (IsModifyingEditCommand(commandId) && IsActiveDocumentReadOnly())
+    {
+        ShowReadOnlyWarning(hWnd);
+        SetFocus(g_hSci);
+        return;
+    }
+
     switch (commandId)
     {
     case IDM_EDIT_UNDO:
@@ -2475,6 +2513,14 @@ std::wstring GetTabDisplayTitle(const DocumentTab& tab)
     if (!tab.path.empty())
         return FileNameFromPath(tab.path);
     return L"Untitled";
+}
+
+std::wstring GetTabBarDisplayTitle(const DocumentTab& tab)
+{
+    std::wstring title = GetTabDisplayTitle(tab);
+    if (tab.readOnly)
+        title = L"[R] " + title;
+    return title;
 }
 
 std::wstring GetTabTooltipText(int tabIndex)
@@ -2612,6 +2658,7 @@ void CaptureActiveTab()
     tab.firstVisibleLine = Sci(SCI_GETFIRSTVISIBLELINE);
     tab.xOffset = Sci(SCI_GETXOFFSET);
     tab.modified = tab.text != tab.savedText;
+    tab.readOnly = Sci(SCI_GETREADONLY) != 0;
 }
 
 DocumentTab CreateUntitledTab()
@@ -2668,6 +2715,7 @@ void LoadTabIntoEditor(int tabIndex)
 
     {
         ScopedRedrawPause redrawPause(g_hSci);
+        Sci(SCI_SETREADONLY, FALSE, 0);
         ClearWordHighlights();
         ClearSearchMarks();
         Sci(SCI_SETEOLMODE, tab.eolMode, 0);
@@ -2683,6 +2731,7 @@ void LoadTabIntoEditor(int tabIndex)
         Sci(SCI_SETSEL, static_cast<uptr_t>(anchorPosition), caretPosition);
         Sci(SCI_SETFIRSTVISIBLELINE, static_cast<uptr_t>(firstVisibleLine), 0);
         Sci(SCI_SETXOFFSET, static_cast<uptr_t>(xOffset), 0);
+        Sci(SCI_SETREADONLY, tab.readOnly ? TRUE : FALSE, 0);
     }
 
     g_loadingTabContent = false;
@@ -3601,7 +3650,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         else if (header && header->hwndFrom == g_hSci && !g_loadingTabContent)
         {
-            if (header->code == SCN_SAVEPOINTLEFT)
+            if (header->code == SCN_MODIFYATTEMPTRO)
+            {
+                ShowReadOnlyWarning(hWnd);
+            }
+            else if (header->code == SCN_SAVEPOINTLEFT)
             {
                 SetActiveTabModified(true);
                 InvalidateStatusBar();

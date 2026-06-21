@@ -28,9 +28,15 @@ Builds the optimized release executable at `x64/Release/openedit.exe`.
 
 Runs the debug build. If linking fails with `LNK1168`, close any running `openedit.exe`.
 
+For release packaging, use a versioned timestamp directory under `dist/`, for example
+`dist/openedit-release-x64-1.0.12-20260621-232745`, containing `openedit.exe` and `LICENSE`,
+then zip that directory with the same base name.
+
 ## Coding Style & Naming Conventions
 
 Use C++17 and existing Win32 patterns. Keep indentation and brace style consistent with nearby code. Prefer `constexpr` for constants, `kName` for constants, `PascalCase` for functions/types, and descriptive local variable names. Keep resource IDs synchronized between `src/Resource.h` and `openedit.rc`.
+
+When bumping the application version, update both the version resource in `openedit.rc` and the About window version text in `src/openedit_dialogs.cpp`.
 
 ## Testing Guidelines
 
@@ -43,3 +49,5 @@ History currently only establishes an initial commit. Use short imperative subje
 ## Agent-Specific Instructions
 
 Do not edit generated outputs in `x64/`, `openedit/x64/`, or packaged artifacts in `dist/` unless explicitly requested. Avoid changing vendored `lib/` code. `openedit.rc` uses legacy encoding; if editing it, preserve its encoding.
+
+Git commits and repository state changes are handled manually by the user. Do not run Git commands except for explicit read-only file inspection when requested; never stage, unstage, restore, checkout, reset, or commit changes.
